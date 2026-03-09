@@ -91,15 +91,12 @@ jobs:
             ## Cortex-OS ${{ github.ref_name }}
 
             ### Download & Install
-            1. Download the installer for your OS below
-            2. Run the installer
-            3. Launch Cortex-OS
-            4. Enter your API key (Gemini/OpenAI/Claude) in Settings
-
-            ### Requirements
-            - **Python 3.11+** must be installed on your system
-            - Run `pip install -e daemon/` to install the AI backend
-            - Start the daemon: `python -m pilot.server`
+            1. **Install Python 3.11+** on your system (if not already installed)
+            2. Install the AI backend: `pip install pilot-daemon` or `pip install -e daemon/`
+            3. Download the installer for your OS below
+            4. Run the installer and launch Cortex-OS
+            5. The app will **automatically start the AI daemon** in the background!
+            6. Enter your API key (Gemini/OpenAI/Claude) in Settings
 
             ### What's New
             - 🌀 Arc Reactor animated logo
