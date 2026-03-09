@@ -18,6 +18,7 @@
    */
 
   import { session } from "../stores/session";
+  import { tick } from "svelte";
 
   // ── Props ──
   let { onGesture = (name: string) => {} }: { onGesture?: (name: string) => void } = $props();
@@ -111,14 +112,22 @@
       return;
     }
 
-    if (videoEl) {
-      videoEl.srcObject = stream;
-      await videoEl.play();
-    }
-
     isActive = true;
     showCamera = true;
     fingerTrail = [];
+    
+    // Wait for Svelte to render the `<video>` element before assigning the stream
+    await tick();
+
+    if (videoEl) {
+      videoEl.srcObject = stream;
+      try {
+        await videoEl.play();
+      } catch (e) {
+        console.error("Video play failed", e);
+      }
+    }
+
     detectFrame();
   }
 
@@ -468,7 +477,7 @@
 
   {#if showCamera}
     <div class="camera-pip" class:gesture-detected={!!currentGesture}>
-      <video bind:this={videoEl} class="cam-video" playsinline muted></video>
+      <video bind:this={videoEl} class="cam-video" playsinline muted autoplay></video>
       <canvas bind:this={canvasEl} class="cam-overlay" width="320" height="240"></canvas>
       <canvas bind:this={trailCanvas} class="cam-trail" width="320" height="240"></canvas>
       <button class="pip-close" onclick={stopGestures}>×</button>
