@@ -15,17 +15,24 @@ use tauri::Manager;
 struct DaemonProcess(Mutex<Option<Child>>);
 
 fn spawn_daemon() -> Option<Child> {
-    // Try to find the daemon directory relative to the executable
-    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let mut possible_dirs = vec![std::path::PathBuf::from("daemon")];
 
-    // Look for the daemon in several possible locations
-    let possible_dirs = vec![
-        exe_dir.join("daemon"),                           // bundled next to exe
-        exe_dir.parent()?.join("daemon"),                 // one level up
-        exe_dir.parent()?.parent()?.join("daemon"),       // two levels up (dev)
-        std::path::PathBuf::from("daemon"),               // current working directory
-        dirs::home_dir()?.join(".cortex-os").join("daemon"), // user install dir
-    ];
+    // Safely build paths relative to the executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            possible_dirs.push(exe_dir.join("daemon"));
+            if let Some(p1) = exe_dir.parent() {
+                possible_dirs.push(p1.join("daemon"));
+                if let Some(p2) = p1.parent() {
+                    possible_dirs.push(p2.join("daemon"));
+                }
+            }
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        possible_dirs.push(home.join(".cortex-os").join("daemon"));
+    }
 
     let daemon_dir = possible_dirs.into_iter().find(|d| d.join("pilot").exists());
 
@@ -66,7 +73,10 @@ fn main() {
         .manage(DaemonProcess(Mutex::new(daemon_child)))
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
-            window.hide().unwrap();
+            
+            // Show the window when the user starts the app, rather than hiding it
+            window.show().unwrap();
+            window.set_focus().unwrap();
 
             tray::setup_tray(app)?;
             hotkey::register_hotkey(app)?;
