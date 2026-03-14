@@ -82,6 +82,7 @@ function createSession() {
         update((s) => ({ ...s, phase: String(p.phase ?? "") }));
         break;
 
+      case "plan_preview": {
         const plan: Plan = {
           plan_id: String(p.plan_id ?? ""),
           explanation: String(p.explanation ?? ""),

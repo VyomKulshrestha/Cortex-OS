@@ -9,8 +9,8 @@ Now cross-platform with 50+ action types covering full system control.
 from __future__ import annotations
 
 import logging
-import uuid
 import typing
+import uuid
 from typing import TYPE_CHECKING
 
 from pilot.actions import (
@@ -322,7 +322,7 @@ class Executor:
 
         for i, action in enumerate(plan.actions):
             self._audit.log_action_start(action, plan_id)
-            
+
             if on_action_start:
                 await on_action_start(action)
 
@@ -331,10 +331,10 @@ class Executor:
 
             result = await self._execute_single(action, snapshot_id)
             self._audit.log_action_result(result, plan_id)
-            
+
             if on_action_complete:
                 await on_action_complete(result)
-                
+
             results.append(result)
 
             # Store output for chaining
