@@ -73,6 +73,9 @@ class PilotServer:
         self._planner: Any = None
         self._executor: Any = None
         self._verifier: Any = None
+        self._reflector: Any = None
+        self._multi_agent: Any = None
+        self._background: Any = None
         self._memory: Any = None
         self._vault: Any = None
         self._running = False
@@ -80,8 +83,11 @@ class PilotServer:
 
     async def initialize(self) -> None:
         """Initialize all agent components."""
+        from pilot.agents.background import BackgroundTaskManager
         from pilot.agents.executor import Executor
+        from pilot.agents.multi_agent import MultiAgentRouter
         from pilot.agents.planner import Planner
+        from pilot.agents.reflector import Reflector
         from pilot.agents.verifier import Verifier
         from pilot.memory.store import MemoryStore
         from pilot.models.router import ModelRouter
@@ -102,6 +108,14 @@ class PilotServer:
         self._executor = Executor(self.config, validator, permissions, audit)
         self._verifier = Verifier(model_router)
 
+        # Advanced agent components
+        self._reflector = Reflector(model_router)
+        await self._reflector.initialize()
+        self._multi_agent = MultiAgentRouter(model_router)
+        self._background = BackgroundTaskManager()
+        self._background.set_broadcast(self._broadcast_notification)
+        self._background.register_builtin_monitors()
+
         self._handlers = {
             "execute": self._handle_execute,
             "confirm": self._handle_confirm,
@@ -116,7 +130,22 @@ class PilotServer:
             "ping": self._handle_ping,
             "system_status": self._handle_system_status,
             "capabilities": self._handle_capabilities,
+            # Advanced agent endpoints
+            "reflection_stats": self._handle_reflection_stats,
+            "background_tasks": self._handle_background_tasks,
+            "background_start": self._handle_background_start,
+            "background_stop": self._handle_background_stop,
+            "agent_routing": self._handle_agent_routing,
         }
+
+    async def _broadcast_notification(self, method: str, params: Any) -> None:
+        """Broadcast a notification to all connected clients."""
+        msg = _notification(method, params)
+        for client in list(self._clients):
+            try:
+                await client.send(msg)
+            except Exception:
+                pass
 
     async def _handle_connection(self, websocket: ServerConnection) -> None:
         self._clients.add(websocket)
@@ -162,7 +191,17 @@ class PilotServer:
         if not user_input.strip():
             return {"status": "error", "message": "Empty input"}
 
-        error_context = ""
+        import time
+        _start_time = time.time()
+
+        # Multi-agent routing analysis
+        routing = self._multi_agent.get_routing_summary(user_input)
+        await ws.send(_notification("agent_routing", routing))
+
+        # Get improvement context from reflector
+        improvement_ctx = await self._reflector.get_improvement_context(user_input)
+
+        error_context = improvement_ctx  # Seed with past lessons
         all_results: list = []
         last_verification = None
         last_explanation = ""
@@ -227,11 +266,20 @@ class PilotServer:
 
             if verification.passed:
                 asyncio.create_task(self._memory.record(user_input, plan, results))
+                # Reflection step — self-improvement after success
+                asyncio.create_task(
+                    self._reflector.reflect(
+                        user_input, plan, results, verification,
+                        retry_count=attempt,
+                        duration_ms=int((time.time() - _start_time) * 1000),
+                    )
+                )
                 return {
                     "status": "success",
                     "results": [r.model_dump() for r in results],
                     "verification": verification.model_dump(),
                     "explanation": plan.explanation,
+                    "agent_routing": self._multi_agent.get_routing_summary(user_input),
                 }
 
             # Execution failed — build error context for retry
@@ -410,6 +458,33 @@ class PilotServer:
             "count": len(ActionType),
         }
 
+    # -- Advanced Agent Endpoints --
+
+    async def _handle_reflection_stats(self, params: dict, ws: ServerConnection) -> dict:
+        """Return self-improvement reflection statistics."""
+        return await self._reflector.get_stats()
+
+    async def _handle_background_tasks(self, params: dict, ws: ServerConnection) -> dict:
+        """List all registered background monitoring tasks."""
+        return {"tasks": self._background.list_tasks()}
+
+    async def _handle_background_start(self, params: dict, ws: ServerConnection) -> dict:
+        """Start a background monitoring task."""
+        task_id = params.get("task_id", "")
+        ok = self._background.start(task_id)
+        return {"status": "started" if ok else "error", "task_id": task_id}
+
+    async def _handle_background_stop(self, params: dict, ws: ServerConnection) -> dict:
+        """Stop a background monitoring task."""
+        task_id = params.get("task_id", "")
+        ok = self._background.stop(task_id)
+        return {"status": "stopped" if ok else "error", "task_id": task_id}
+
+    async def _handle_agent_routing(self, params: dict, ws: ServerConnection) -> dict:
+        """Analyze which specialist agent(s) would handle a given input."""
+        query = params.get("input", "")
+        return self._multi_agent.get_routing_summary(query)
+
     # -- Broadcast --
 
     async def broadcast(self, method: str, params: Any) -> None:
@@ -441,12 +516,16 @@ class PilotServer:
 
     async def stop(self) -> None:
         self._running = False
+        if self._background:
+            self._background.stop_all()
         for pending in self._pending_confirms.values():
             pending.event.set()
         self._pending_confirms.clear()
         if self._server:
             self._server.close()
             await self._server.wait_closed()
+        if self._reflector:
+            await self._reflector.close()
         if self._memory:
             await self._memory.close()
         logger.info("Pilot daemon stopped")
