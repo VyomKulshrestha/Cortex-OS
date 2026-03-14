@@ -192,6 +192,7 @@ class PilotServer:
             return {"status": "error", "message": "Empty input"}
 
         import time
+
         _start_time = time.time()
 
         # Multi-agent routing analysis
@@ -269,7 +270,10 @@ class PilotServer:
                 # Reflection step — self-improvement after success
                 asyncio.create_task(
                     self._reflector.reflect(
-                        user_input, plan, results, verification,
+                        user_input,
+                        plan,
+                        results,
+                        verification,
                         retry_count=attempt,
                         duration_ms=int((time.time() - _start_time) * 1000),
                     )
