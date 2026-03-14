@@ -11,6 +11,7 @@
   import NeuralBackground from "./lib/components/NeuralBackground.svelte";
   import ParticleBurst from "./lib/components/ParticleBurst.svelte";
   import ExecutionGraph from "./lib/components/ExecutionGraph.svelte";
+  import ReActPipeline from "./lib/components/ReActPipeline.svelte";
   import { session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
@@ -124,10 +125,16 @@
     </div>
   </header>
 
-  <div class="content">
+    <div class="content">
     {#if activeTab === "chat"}
       <div class="chat-panel">
         <NeuralBackground />
+        
+        <!-- ReAct Pipeline Visualizer (Top layer) -->
+        <div class="pipeline-container">
+          <ReActPipeline />
+        </div>
+
         {#if $session.confirmRequired}
           <ConfirmDialog
             actions={$session.confirmActions}

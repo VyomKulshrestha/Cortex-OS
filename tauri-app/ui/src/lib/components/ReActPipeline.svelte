@@ -1,0 +1,646 @@
+<script lang="ts">
+  /**
+   * ReActPipeline — Real-time visualization of the AI reasoning process.
+   *
+   * Shows a dynamic graph of the full agent loop:
+   *   User Request → Memory Recall → Agent Routing → Planning → Execution → Verification → Reflection → Memory Update
+   *
+   * Each node lights up, pulses, and transitions as the backend emits phase events.
+   */
+
+  import { session } from "../stores/session";
+  import { onNotification } from "../api/daemon";
+  import { fade, slide } from "svelte/transition";
+
+  // ── Pipeline Stage Types ──
+
+  type StageStatus = "idle" | "active" | "success" | "error" | "skipped";
+
+  interface PipelineStage {
+    id: string;
+    label: string;
+    emoji: string;
+    status: StageStatus;
+    detail: string;
+    startTime: number;
+    endTime: number;
+    children?: PipelineStage[];
+  }
+
+  // ── State ──
+
+  let isVisible = $state(false);
+  let totalDuration = $state(0);
+  let agentRouting = $state<{ assigned_agents: string[]; is_multi_agent: boolean } | null>(null);
+
+  let stages = $state<PipelineStage[]>([
+    { id: "user_input", label: "User Request", emoji: "💬", status: "idle", detail: "", startTime: 0, endTime: 0 },
+    { id: "memory_recall", label: "Memory Recall", emoji: "🧠", status: "idle", detail: "", startTime: 0, endTime: 0 },
+    { id: "agent_routing", label: "Agent Routing", emoji: "🔀", status: "idle", detail: "", startTime: 0, endTime: 0 },
+    { id: "planning", label: "Planning", emoji: "📐", status: "idle", detail: "", startTime: 0, endTime: 0 },
+    { id: "confirmation", label: "Confirmation Gate", emoji: "🔐", status: "idle", detail: "", startTime: 0, endTime: 0 },
+    { id: "executing", label: "Execution", emoji: "⚡", status: "idle", detail: "", startTime: 0, endTime: 0 },
+    { id: "verifying", label: "Verification", emoji: "✅", status: "idle", detail: "", startTime: 0, endTime: 0 },
+    { id: "reflection", label: "Reflection", emoji: "🪞", status: "idle", detail: "", startTime: 0, endTime: 0 },
+    { id: "memory_update", label: "Memory Update", emoji: "💾", status: "idle", detail: "", startTime: 0, endTime: 0 },
+  ]);
+
+  let executionActions = $state<{ type: string; target: string; status: string }[]>([]);
+  let pipelineStartTime = 0;
+
+  function resetPipeline() {
+    stages = stages.map(s => ({ ...s, status: "idle" as StageStatus, detail: "", startTime: 0, endTime: 0 }));
+    executionActions = [];
+    totalDuration = 0;
+    agentRouting = null;
+  }
+
+  function setStage(id: string, status: StageStatus, detail: string = "") {
+    const now = Date.now();
+    stages = stages.map(s => {
+      if (s.id === id) {
+        return {
+          ...s,
+          status,
+          detail: detail || s.detail,
+          startTime: s.startTime || now,
+          endTime: status === "success" || status === "error" ? now : 0,
+        };
+      }
+      return s;
+    });
+  }
+
+  // ── Listen to WebSocket Notifications ──
+
+  onNotification((method: string, params: unknown) => {
+    const p = params as Record<string, any>;
+
+    switch (method) {
+      case "status": {
+        const phase = String(p.phase || "");
+        isVisible = true;
+
+        if (phase === "planning" || phase.startsWith("re-planning")) {
+          if (pipelineStartTime === 0) pipelineStartTime = Date.now();
+          setStage("user_input", "success", "Received");
+          setStage("memory_recall", "success", "Context loaded");
+          setStage("agent_routing", "success",
+            agentRouting ? agentRouting.assigned_agents.join(", ") : "Analyzing...");
+          setStage("planning", "active", phase.includes("re-planning") ? "Re-planning..." : "Generating plan...");
+          // Reset downstream
+          setStage("confirmation", "idle");
+          setStage("executing", "idle");
+          setStage("verifying", "idle");
+          setStage("reflection", "idle");
+          setStage("memory_update", "idle");
+        }
+
+        if (phase === "awaiting_confirmation") {
+          setStage("planning", "success", "Plan created");
+          setStage("confirmation", "active", "Waiting for user...");
+        }
+
+        if (phase === "executing") {
+          setStage("planning", "success", "Plan created");
+          setStage("confirmation", "success", "Approved");
+          setStage("executing", "active", "Running actions...");
+        }
+
+        if (phase === "verifying") {
+          setStage("executing", "success", `${executionActions.length} action(s) done`);
+          setStage("verifying", "active", "Checking results...");
+        }
+
+        if (phase.includes("retrying")) {
+          setStage("verifying", "error", "Mismatch detected — retrying");
+          setStage("planning", "active", "Re-planning...");
+        }
+        break;
+      }
+
+      case "agent_routing": {
+        agentRouting = {
+          assigned_agents: p.assigned_agents || [],
+          is_multi_agent: p.is_multi_agent || false,
+        };
+        setStage("agent_routing", "success",
+          (p.assigned_agents || []).join(", ") || "general");
+        break;
+      }
+
+      case "plan_preview": {
+        setStage("planning", "success", p.explanation?.substring(0, 80) || "Plan ready");
+        const needsConfirm = (p.actions || []).some((a: any) => a.requires_confirmation);
+        if (needsConfirm) {
+          setStage("confirmation", "active", "User approval required");
+        } else {
+          setStage("confirmation", "skipped", "Auto-approved");
+        }
+        break;
+      }
+
+      case "action_start": {
+        const action = p.action || {};
+        executionActions = [...executionActions, {
+          type: action.action_type || "unknown",
+          target: action.target || "",
+          status: "running",
+        }];
+        setStage("executing", "active", `Running: ${action.action_type}`);
+        break;
+      }
+
+      case "action_complete": {
+        const result = p.result || {};
+        const action = result.action || {};
+        const success = result.success;
+        executionActions = executionActions.map(a =>
+          a.type === (action.action_type || "") && a.status === "running"
+            ? { ...a, status: success ? "success" : "error" }
+            : a
+        );
+        break;
+      }
+
+      case "confirm_required": {
+        setStage("confirmation", "active", "Waiting for user decision...");
+        break;
+      }
+    }
+  });
+
+  // ── React to session phase changes for completion ──
+
+  $effect(() => {
+    const s = $session;
+
+    // When loading stops, mark final stages
+    if (!s.loading && isVisible && pipelineStartTime > 0) {
+      const lastMsg = s.messages[s.messages.length - 1];
+      if (lastMsg) {
+        if (lastMsg.type === "result") {
+          setStage("executing", "success", `${executionActions.length} action(s) completed`);
+          setStage("verifying", lastMsg.verification?.passed ? "success" : "error",
+            lastMsg.verification?.passed ? "All checks passed" : "Verification failed");
+          setStage("reflection", "success", "Performance analyzed");
+          setStage("memory_update", "success", "History saved");
+          totalDuration = Date.now() - pipelineStartTime;
+        } else if (lastMsg.type === "error") {
+          setStage("executing", "error", "Failed");
+          setStage("verifying", "error", "N/A");
+          setStage("reflection", "success", "Failure recorded");
+          setStage("memory_update", "success", "Error logged");
+          totalDuration = Date.now() - pipelineStartTime;
+        }
+      }
+      pipelineStartTime = 0;
+    }
+
+    // When a new command starts, reset
+    if (s.loading && s.phase === "" && !s.currentPlan) {
+      resetPipeline();
+      isVisible = true;
+      pipelineStartTime = Date.now();
+      setStage("user_input", "active", "Processing...");
+    }
+  });
+
+  let dismiss = () => { isVisible = false; };
+
+  // Computed: progress percentage
+  let progress = $derived(
+    Math.round(
+      (stages.filter(s => s.status === "success" || s.status === "skipped").length / stages.length) * 100
+    )
+  );
+</script>
+
+{#if isVisible}
+  <div class="react-pipeline" transition:slide={{ duration: 300 }}>
+    <!-- Header -->
+    <div class="pipeline-header">
+      <div class="pipeline-title">
+        <span class="reactor-icon">⚛️</span>
+        ReAct Pipeline
+        <span class="progress-chip">{progress}%</span>
+      </div>
+      <div class="pipeline-controls">
+        {#if totalDuration > 0}
+          <span class="duration-badge">{(totalDuration / 1000).toFixed(1)}s</span>
+        {/if}
+        {#if agentRouting?.is_multi_agent}
+          <span class="multi-agent-badge">Multi-Agent</span>
+        {/if}
+        <button class="dismiss-btn" onclick={dismiss} title="Dismiss">✕</button>
+      </div>
+    </div>
+
+    <!-- Progress bar -->
+    <div class="progress-track">
+      <div class="progress-fill" style="width: {progress}%"></div>
+    </div>
+
+    <!-- Pipeline nodes -->
+    <div class="pipeline-graph">
+      {#each stages as stage, i (stage.id)}
+        <div class="stage-wrapper" transition:fade={{ duration: 200, delay: i * 30 }}>
+          {#if i > 0}
+            <div class="connector" class:active={stage.status !== "idle"} class:success={stage.status === "success"} class:error={stage.status === "error"}></div>
+          {/if}
+
+          <div class="stage-node {stage.status}" class:pulse={stage.status === "active"}>
+            <div class="stage-emoji">{stage.emoji}</div>
+            <div class="stage-info">
+              <div class="stage-label">{stage.label}</div>
+              {#if stage.detail}
+                <div class="stage-detail" transition:fade={{ duration: 150 }}>{stage.detail}</div>
+              {/if}
+            </div>
+            <div class="stage-indicator">
+              {#if stage.status === "active"}
+                <div class="spinner"></div>
+              {:else if stage.status === "success"}
+                <span class="check">✓</span>
+              {:else if stage.status === "error"}
+                <span class="cross">✗</span>
+              {:else if stage.status === "skipped"}
+                <span class="skip">⤸</span>
+              {:else}
+                <span class="dot"></span>
+              {/if}
+            </div>
+          </div>
+
+          <!-- Execution sub-actions -->
+          {#if stage.id === "executing" && executionActions.length > 0}
+            <div class="sub-actions" transition:slide={{ duration: 200 }}>
+              {#each executionActions as act, j}
+                <div class="sub-action {act.status}" transition:fade={{ duration: 150 }}>
+                  <span class="sub-dot {act.status}"></span>
+                  <span class="sub-type">{act.type.replace(/_/g, " ")}</span>
+                  {#if act.target}
+                    <span class="sub-target">{act.target}</span>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/each}
+    </div>
+
+    <!-- Agent routing info -->
+    {#if agentRouting}
+      <div class="routing-info" transition:fade>
+        <span class="routing-label">Agents:</span>
+        {#each agentRouting.assigned_agents as agent}
+          <span class="agent-chip">{agent.replace(/_/g, " ")}</span>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/if}
+
+<style>
+  .react-pipeline {
+    background: linear-gradient(135deg, rgba(8, 12, 22, 0.85), rgba(15, 23, 42, 0.85));
+    border: 1px solid rgba(0, 240, 255, 0.15);
+    border-radius: 14px;
+    padding: 1rem 1.25rem;
+    margin: 0.75rem 0;
+    backdrop-filter: blur(12px);
+    font-family: 'Inter', 'JetBrains Mono', monospace;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .pipeline-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+  }
+
+  .pipeline-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #00f0ff;
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+  }
+
+  .reactor-icon {
+    font-size: 1.1rem;
+    filter: drop-shadow(0 0 6px rgba(0, 240, 255, 0.6));
+  }
+
+  .progress-chip {
+    background: rgba(0, 240, 255, 0.15);
+    color: #00f0ff;
+    padding: 0.1rem 0.4rem;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    border: 1px solid rgba(0, 240, 255, 0.25);
+  }
+
+  .pipeline-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .duration-badge {
+    background: rgba(0, 255, 170, 0.1);
+    color: #00ffaa;
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    border: 1px solid rgba(0, 255, 170, 0.2);
+  }
+
+  .multi-agent-badge {
+    background: rgba(255, 170, 0, 0.15);
+    color: #ffaa00;
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    border: 1px solid rgba(255, 170, 0, 0.3);
+  }
+
+  .dismiss-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.5);
+    border-radius: 50%;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 0.7rem;
+    transition: all 0.2s;
+  }
+
+  .dismiss-btn:hover {
+    background: rgba(255, 50, 50, 0.2);
+    color: #ff5555;
+    border-color: rgba(255, 50, 50, 0.3);
+  }
+
+  /* Progress bar */
+  .progress-track {
+    height: 3px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 3px;
+    margin-bottom: 1rem;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #00f0ff, #00ffaa);
+    border-radius: 3px;
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+  }
+
+  /* Pipeline graph */
+  .pipeline-graph {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .stage-wrapper {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .connector {
+    width: 2px;
+    height: 12px;
+    background: rgba(255, 255, 255, 0.07);
+    margin-left: 19px;
+    transition: all 0.4s ease;
+  }
+
+  .connector.active {
+    background: rgba(0, 240, 255, 0.3);
+    box-shadow: 0 0 4px rgba(0, 240, 255, 0.2);
+  }
+
+  .connector.success {
+    background: rgba(0, 255, 170, 0.4);
+  }
+
+  .connector.error {
+    background: rgba(255, 50, 50, 0.4);
+  }
+
+  .stage-node {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+  }
+
+  .stage-node.active {
+    background: rgba(0, 240, 255, 0.08);
+    border-color: rgba(0, 240, 255, 0.35);
+    box-shadow: 0 0 24px rgba(0, 240, 255, 0.08), inset 0 0 20px rgba(0, 240, 255, 0.03);
+  }
+
+  .stage-node.success {
+    background: rgba(0, 255, 170, 0.04);
+    border-color: rgba(0, 255, 170, 0.15);
+  }
+
+  .stage-node.error {
+    background: rgba(255, 50, 50, 0.05);
+    border-color: rgba(255, 50, 50, 0.2);
+  }
+
+  .stage-node.skipped {
+    opacity: 0.45;
+    border-style: dashed;
+  }
+
+  .stage-node.pulse {
+    animation: node-pulse 1.5s infinite;
+  }
+
+  .stage-emoji {
+    font-size: 1.2rem;
+    width: 28px;
+    text-align: center;
+    flex-shrink: 0;
+    filter: drop-shadow(0 0 3px rgba(0, 240, 255, 0.3));
+  }
+
+  .stage-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .stage-label {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+
+  .stage-node.idle .stage-label { color: rgba(255, 255, 255, 0.35); }
+  .stage-node.active .stage-label { color: #00f0ff; }
+  .stage-node.success .stage-label { color: #00ffaa; }
+  .stage-node.error .stage-label { color: #ff5555; }
+
+  .stage-detail {
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 0.7rem;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+
+  .stage-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(0, 240, 255, 0.2);
+    border-top-color: #00f0ff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  .check {
+    color: #00ffaa;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-shadow: 0 0 8px rgba(0, 255, 170, 0.5);
+  }
+
+  .cross {
+    color: #ff5555;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-shadow: 0 0 8px rgba(255, 50, 50, 0.5);
+  }
+
+  .skip {
+    color: rgba(255, 255, 255, 0.3);
+    font-size: 0.85rem;
+  }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  /* Sub-actions (expanded execution details) */
+  .sub-actions {
+    margin-left: 40px;
+    padding: 0.25rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .sub-action {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.6);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .sub-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .sub-dot.running { background: #00f0ff; box-shadow: 0 0 6px #00f0ff; }
+  .sub-dot.success { background: #00ffaa; }
+  .sub-dot.error { background: #ff5555; }
+
+  .sub-type {
+    color: rgba(255, 255, 255, 0.75);
+    text-transform: capitalize;
+    font-weight: 500;
+  }
+
+  .sub-target {
+    color: rgba(255, 255, 255, 0.35);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 150px;
+  }
+
+  /* Agent routing info */
+  .routing-info {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    flex-wrap: wrap;
+  }
+
+  .routing-label {
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .agent-chip {
+    background: linear-gradient(135deg, rgba(0, 240, 255, 0.1), rgba(120, 100, 255, 0.1));
+    color: #b8b0ff;
+    padding: 0.15rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: capitalize;
+    border: 1px solid rgba(120, 100, 255, 0.2);
+  }
+
+  @keyframes node-pulse {
+    0% { box-shadow: 0 0 8px rgba(0, 240, 255, 0.1), inset 0 0 8px rgba(0, 240, 255, 0.02); }
+    50% { box-shadow: 0 0 20px rgba(0, 240, 255, 0.2), inset 0 0 16px rgba(0, 240, 255, 0.05); }
+    100% { box-shadow: 0 0 8px rgba(0, 240, 255, 0.1), inset 0 0 8px rgba(0, 240, 255, 0.02); }
+  }
+
+  @keyframes spin {
+    100% { transform: rotate(360deg); }
+  }
+</style>
