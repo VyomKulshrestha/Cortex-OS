@@ -1,20 +1,42 @@
 <script lang="ts">
   /**
-   * GestureControl v2 — Enhanced hand gesture recognition with 12 gestures.
+   * GestureControl v3 — 30+ hand gesture recognition engine.
    *
-   * NEW Gestures:
-   *  ✋ Open Palm   → Cancel / Stop
-   *  👍 Thumbs Up  → Confirm plan
-   *  👎 Thumbs Down → Deny / Reject
-   *  ✌️ Peace Sign  → Toggle voice mode
-   *  👊 Fist       → Execute last command
-   *  👆 Point Up   → Scroll up
-   *  🤟 Rock       → System info
-   *  👌 OK Sign    → Accept / Acknowledge
-   *  🤙 Call Me    → Open settings
-   *  👈 Swipe Left → Previous tab
-   *  👉 Swipe Right → Next tab
-   *  🔫 Finger Gun → Screenshot!
+   * STATIC POSE GESTURES:
+   *  ✋ Open Palm       → Cancel / Stop
+   *  👍 Thumbs Up      → Confirm plan
+   *  👎 Thumbs Down    → Deny / Reject
+   *  ✌️ Peace Sign      → Toggle voice mode
+   *  👊 Fist           → Execute last command
+   *  👆 Point Up       → Scroll up
+   *  🤟 Rock           → System info
+   *  👌 OK Sign        → Accept / Acknowledge
+   *  🤙 Call Me        → Open settings
+   *  🔫 Finger Gun     → Screenshot
+   *  🤏 Pinch          → Grab / Select
+   *  🖕 Middle Finger  → Emergency stop
+   *  🌸 Pinky Up       → Fancy mode
+   *  🖖 Vulcan         → Diagnostics
+   *  🤞 Crossed Fingers → Luck / Random action
+   *  ☝️ Index Only      → Focus mode
+   *  🫰 Snap Ready     → Quick launch
+   *  🤘 Devil Horns    → Play music
+   *  🫳 Palm Down      → Mute / Silence
+   *  🫴 Palm Up        → Unmute / Restore
+   *  ✌️+👆 Three Up     → Brightness up
+   *  🖖+✋ Four Up      → Brightness down
+   *
+   * MOTION-BASED GESTURES:
+   *  👈 Swipe Left     → Previous tab
+   *  👉 Swipe Right    → Next tab
+   *  ↕️ Swipe Up        → Scroll up fast
+   *  ↕️ Swipe Down      → Scroll down fast
+   *  🔄 Circular CW    → Volume up
+   *  🔄 Circular CCW   → Volume down
+   *  🫸 Palm Push      → Confirm AI action
+   *  🫷 Palm Pull      → Cancel AI action
+   *  ✌️ Two-Finger Swipe Left → Switch workspace left
+   *  ✌️ Two-Finger Swipe Right → Switch workspace right
    */
 
   import { session } from "../stores/session";
@@ -40,21 +62,34 @@
   let lastGestureTime = 0;
   let candidateGesture = "";
   let candidateCount = 0;
-  const REQUIRED_FRAMES = 6;
-  
+  const REQUIRED_FRAMES = 5;
+
   // Finger trail tracking for air drawing
   let fingerTrail: { x: number; y: number; t: number }[] = [];
   let prevIndexPos: { x: number; y: number } | null = null;
-  
-  const GESTURE_COOLDOWN_MS = 1500;
+
+  // Motion tracking buffers for dynamic gestures
+  let wristHistory: { x: number; y: number; z: number; t: number }[] = [];
+  let indexHistory: { x: number; y: number; t: number }[] = [];
+  const MOTION_BUFFER_SIZE = 20;
+
+  const GESTURE_COOLDOWN_MS = 1200;
   const MAX_TRAIL_LENGTH = 60;
 
-  // Gesture emoji map
+  // Gesture emoji map — 30+ gestures
   const GESTURE_EMOJIS: Record<string, string> = {
+    // Static poses
     palm: "✋", thumbs_up: "👍", thumbs_down: "👎", peace: "✌️",
     fist: "👊", point_up: "👆", rock: "🤟", ok: "👌",
-    call_me: "🤙", finger_gun: "🔫", swipe_left: "👈", swipe_right: "👉",
-    pinch: "🤏", middle_finger: "🖕", pinky_up: "🌸", vulcan: "🖖",
+    call_me: "🤙", finger_gun: "🔫", pinch: "🤏",
+    middle_finger: "🖕", pinky_up: "🌸", vulcan: "🖖",
+    crossed_fingers: "🤞", snap_ready: "🫰", devil_horns: "🤘",
+    palm_down: "🫳", palm_up: "🫴", three_up: "🔆", four_up: "🔅",
+    // Motion-based
+    swipe_left: "👈", swipe_right: "👉", swipe_up: "⬆️", swipe_down: "⬇️",
+    circular_cw: "🔄", circular_ccw: "🔃",
+    palm_push: "🫸", palm_pull: "🫷",
+    two_finger_swipe_left: "⏪", two_finger_swipe_right: "⏩",
   };
 
   // ── MediaPipe Hands Loading ──
@@ -144,6 +179,8 @@
     prevIndexPos = null;
     candidateGesture = "";
     candidateCount = 0;
+    wristHistory = [];
+    indexHistory = [];
 
     if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = 0; }
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
@@ -166,6 +203,16 @@
     }
 
     const landmarks = results.multiHandLandmarks[0];
+
+    // Update motion buffers
+    const now = Date.now();
+    const wrist = landmarks[0];
+    wristHistory.push({ x: wrist.x, y: wrist.y, z: wrist.z || 0, t: now });
+    if (wristHistory.length > MOTION_BUFFER_SIZE) wristHistory.shift();
+    const idx = landmarks[8];
+    indexHistory.push({ x: idx.x, y: idx.y, t: now });
+    if (indexHistory.length > MOTION_BUFFER_SIZE) indexHistory.shift();
+
     const gesture = classifyGesture(landmarks);
 
     // Track index finger for air drawing
@@ -291,14 +338,72 @@
       return Math.sqrt(dx * dx + dy * dy);
     };
 
-    // 🖖 Vulcan Salute
+    // 3D distance for push/pull
+    const dist3d = (a: number, b: number) => {
+      const dx = landmarks[a].x - landmarks[b].x;
+      const dy = landmarks[a].y - landmarks[b].y;
+      const dz = (landmarks[a].z || 0) - (landmarks[b].z || 0);
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    };
+
+    // ═══════════════════════════════════════════
+    // MOTION-BASED GESTURES (check first — they are time-sensitive)
+    // ═══════════════════════════════════════════
+
+    // Circular motion detection (volume control)
+    const circularResult = detectCircularMotion();
+    if (circularResult) return circularResult;
+
+    // Palm push/pull (Z-axis depth change)
+    const pushPull = detectPushPull(landmarks);
+    if (pushPull) return pushPull;
+
+    // Two-finger swipe (peace sign + horizontal motion)
+    if (prevIndexPos && indexUp && middleUp && !ringUp && !pinkyUp) {
+      const dx = landmarks[WRIST].x - prevIndexPos.x;
+      if (dx < -0.09) return { name: "two_finger_swipe_left", confidence: 0.75 };
+      if (dx > 0.09) return { name: "two_finger_swipe_right", confidence: 0.75 };
+    }
+
+    // Full-hand swipe (all fingers up + horizontal motion)
+    if (prevIndexPos && indexUp && middleUp && ringUp && pinkyUp) {
+      const dx = landmarks[WRIST].x - prevIndexPos.x;
+      const dy = landmarks[WRIST].y - prevIndexPos.y;
+      if (Math.abs(dx) > 0.08) {
+        if (dx < -0.08) return { name: "swipe_left", confidence: 0.7 };
+        if (dx > 0.08) return { name: "swipe_right", confidence: 0.7 };
+      }
+      if (Math.abs(dy) > 0.08) {
+        if (dy < -0.08) return { name: "swipe_up", confidence: 0.7 };
+        if (dy > 0.08) return { name: "swipe_down", confidence: 0.7 };
+      }
+    }
+
+    // ═══════════════════════════════════════════
+    // STATIC POSE GESTURES (most specific first)
+    // ═══════════════════════════════════════════
+
+    // 🫳 Palm Down — all fingers extended, wrist higher than fingertips
+    if (indexUp && middleUp && ringUp && pinkyUp && thumbExtended) {
+      const avgTipY = (landmarks[INDEX_TIP].y + landmarks[MIDDLE_TIP].y +
+        landmarks[RING_TIP].y + landmarks[PINKY_TIP].y) / 4;
+      if (avgTipY > landmarks[WRIST].y + 0.15) {
+        return { name: "palm_down", confidence: 0.8 };
+      }
+      // 🫴 Palm Up — fingertips above wrist significantly
+      if (avgTipY < landmarks[WRIST].y - 0.15) {
+        return { name: "palm_up", confidence: 0.8 };
+      }
+    }
+
+    // 🖖 Vulcan Salute — all 4 fingers up, gap between middle+ring
     if (indexUp && middleUp && ringUp && pinkyUp && !thumbExtended) {
       if (dist(MIDDLE_TIP, RING_TIP) > 0.08) {
         return { name: "vulcan", confidence: 0.85 };
       }
     }
 
-    // 👌 OK Sign — thumb tip touching index tip
+    // 👌 OK Sign — thumb tip touching index tip, others up
     if (dist(THUMB_TIP, INDEX_TIP) < 0.05 && middleUp && ringUp && pinkyUp) {
       return { name: "ok", confidence: 0.85 };
     }
@@ -308,19 +413,38 @@
       return { name: "pinch", confidence: 0.85 };
     }
 
-    // 🖕 Middle Finger
+    // 🫰 Snap Ready — thumb touching middle finger, index curled
+    if (dist(THUMB_TIP, MIDDLE_TIP) < 0.05 && !indexUp && !ringUp && !pinkyUp) {
+      return { name: "snap_ready", confidence: 0.82 };
+    }
+
+    // 🤞 Crossed Fingers — index + middle up, close together
+    if (indexUp && middleUp && !ringUp && !pinkyUp) {
+      if (dist(INDEX_TIP, MIDDLE_TIP) < 0.03) {
+        return { name: "crossed_fingers", confidence: 0.8 };
+      }
+    }
+
+    // 🖕 Middle Finger — only middle extended
     if (!indexUp && middleUp && !ringUp && !pinkyUp && !thumbExtended) {
       return { name: "middle_finger", confidence: 0.9 };
     }
 
-    // 🌸 Pinky Up
+    // 🌸 Pinky Up — only pinky extended
     if (!indexUp && !middleUp && !ringUp && pinkyUp && !thumbExtended) {
       return { name: "pinky_up", confidence: 0.85 };
     }
 
-    // 🔫 Finger Gun — index + thumb extended, others down
+    // 🤘 Devil Horns — index + pinky up, middle + ring down, thumb tucked
+    if (indexUp && !middleUp && !ringUp && pinkyUp && !thumbExtended) {
+      // Extra check: index and pinky spread
+      if (dist(INDEX_TIP, PINKY_TIP) > 0.1) {
+        return { name: "devil_horns", confidence: 0.82 };
+      }
+    }
+
+    // 🔫 Finger Gun — index + thumb extended, others down, thumb horizontal
     if (thumbExtended && indexUp && !middleUp && !ringUp && !pinkyUp) {
-      // Check if thumb is horizontal (pointing sideways)
       if (Math.abs(landmarks[THUMB_TIP].y - landmarks[THUMB_MCP].y) < 0.08) {
         return { name: "finger_gun", confidence: 0.78 };
       }
@@ -331,28 +455,37 @@
       return { name: "call_me", confidence: 0.82 };
     }
 
-    // 👎 Thumbs Down — only thumb extended, pointing downward
+    // 👎 Thumbs Down / 👍 Thumbs Up
     if (thumbExtended && !indexUp && !middleUp && !ringUp && !pinkyUp) {
       if (landmarks[THUMB_TIP].y > landmarks[WRIST].y) {
         return { name: "thumbs_down", confidence: 0.8 };
       }
-      // 👍 Thumbs Up — pointing upward
       if (landmarks[THUMB_TIP].y < landmarks[WRIST].y) {
         return { name: "thumbs_up", confidence: 0.8 };
       }
     }
 
-    // 👊 Fist
+    // 👊 Fist — everything curled
     if (!indexUp && !middleUp && !ringUp && !pinkyUp && !thumbExtended) {
       return { name: "fist", confidence: 0.85 };
     }
 
-    // ✋ Open Palm
+    // ✋ Open Palm — everything extended (default orientation)
     if (indexUp && middleUp && ringUp && pinkyUp && thumbExtended) {
       return { name: "palm", confidence: 0.9 };
     }
 
-    // ✌️ Peace
+    // 🔆 Three Up — index + middle + ring, no pinky
+    if (indexUp && middleUp && ringUp && !pinkyUp && !thumbExtended) {
+      return { name: "three_up", confidence: 0.78 };
+    }
+
+    // 🔅 Four Up — all 4 fingers, no thumb
+    if (indexUp && middleUp && ringUp && pinkyUp && !thumbExtended) {
+      return { name: "four_up", confidence: 0.78 };
+    }
+
+    // ✌️ Peace — index + middle
     if (indexUp && middleUp && !ringUp && !pinkyUp) {
       return { name: "peace", confidence: 0.85 };
     }
@@ -362,26 +495,78 @@
       return { name: "point_up", confidence: 0.8 };
     }
 
-    // 🤟 Rock — index + pinky
+    // 🤟 Rock — index + pinky (with thumb)
     if (indexUp && !middleUp && !ringUp && pinkyUp) {
       return { name: "rock", confidence: 0.75 };
-    }
-
-    // Swipe detection (using wrist horizontal velocity)
-    if (prevIndexPos) {
-      const dx = landmarks[WRIST].x - prevIndexPos.x;
-      if (Math.abs(dx) > 0.08 && indexUp && middleUp && ringUp && pinkyUp) {
-        if (dx < -0.08) return { name: "swipe_left", confidence: 0.7 };
-        if (dx > 0.08) return { name: "swipe_right", confidence: 0.7 };
-      }
     }
 
     return { name: "", confidence: 0 };
   }
 
+  // ── Motion: Circular gesture detection ──
+  function detectCircularMotion(): Gesture | null {
+    if (indexHistory.length < 12) return null;
+    const recent = indexHistory.slice(-12);
+    const cx = recent.reduce((s, p) => s + p.x, 0) / recent.length;
+    const cy = recent.reduce((s, p) => s + p.y, 0) / recent.length;
+
+    // Check if points form a rough circle around the centroid
+    const radii = recent.map(p => Math.sqrt((p.x - cx) ** 2 + (p.y - cy) ** 2));
+    const avgRadius = radii.reduce((s, r) => s + r, 0) / radii.length;
+    if (avgRadius < 0.03 || avgRadius > 0.2) return null;
+
+    // Check circularity: stddev of radii should be small
+    const variance = radii.reduce((s, r) => s + (r - avgRadius) ** 2, 0) / radii.length;
+    if (Math.sqrt(variance) > avgRadius * 0.5) return null;
+
+    // Determine direction using cross product sum
+    let crossSum = 0;
+    for (let i = 1; i < recent.length; i++) {
+      const prev = recent[i - 1];
+      const curr = recent[i];
+      crossSum += (prev.x - cx) * (curr.y - cy) - (prev.y - cy) * (curr.x - cx);
+    }
+
+    if (Math.abs(crossSum) < 0.001) return null;
+
+    // Clear buffer to avoid re-triggering
+    indexHistory.length = 0;
+
+    if (crossSum > 0) return { name: "circular_cw", confidence: 0.75 };
+    return { name: "circular_ccw", confidence: 0.75 };
+  }
+
+  // ── Motion: Palm push/pull (Z-axis depth) ──
+  function detectPushPull(landmarks: any[]): Gesture | null {
+    if (wristHistory.length < 8) return null;
+    const old = wristHistory[0];
+    const now = wristHistory[wristHistory.length - 1];
+    const dz = now.z - old.z;
+    const elapsed = now.t - old.t;
+
+    // Only detect if movement happened in < 600ms
+    if (elapsed > 600 || elapsed < 100) return null;
+
+    // All fingers must be extended (palm pose)
+    const isExtended = (tip: number, pip: number) => landmarks[tip].y < landmarks[pip].y;
+    const allUp = isExtended(8, 6) && isExtended(12, 10) && isExtended(16, 14) && isExtended(20, 18);
+    if (!allUp) return null;
+
+    if (dz < -0.06) {
+      wristHistory.length = 0;
+      return { name: "palm_push", confidence: 0.72 };
+    }
+    if (dz > 0.06) {
+      wristHistory.length = 0;
+      return { name: "palm_pull", confidence: 0.72 };
+    }
+    return null;
+  }
+
   function executeGestureAction(gesture: string) {
     const emoji = GESTURE_EMOJIS[gesture] || "🖐️";
     switch (gesture) {
+      // ── Static Pose Actions ──
       case "palm":
         session.addSystemMessage(`${emoji} Stop / Cancel`);
         break;
@@ -415,12 +600,6 @@
       case "call_me":
         session.addSystemMessage(`${emoji} Opening settings...`);
         break;
-      case "swipe_left":
-        session.addSystemMessage(`${emoji} Previous tab`);
-        break;
-      case "swipe_right":
-        session.addSystemMessage(`${emoji} Next tab`);
-        break;
       case "pinch":
         session.addSystemMessage(`${emoji} Pinch / Grab`);
         break;
@@ -433,6 +612,72 @@
       case "vulcan":
         session.sendCommand("Show detailed system diagnostics and status");
         session.addSystemMessage(`${emoji} Live long and prosper.`);
+        break;
+      case "crossed_fingers":
+        session.sendCommand("Surprise me with something cool");
+        session.addSystemMessage(`${emoji} Feeling lucky...`);
+        break;
+      case "snap_ready":
+        session.sendCommand("Open my most used application");
+        session.addSystemMessage(`${emoji} Quick Launch!`);
+        break;
+      case "devil_horns":
+        session.sendCommand("Open the default music player and play music");
+        session.addSystemMessage(`${emoji} Rock on! Playing music...`);
+        break;
+      case "palm_down":
+        session.sendCommand("Set volume to 0");
+        session.addSystemMessage(`${emoji} Muted!`);
+        break;
+      case "palm_up":
+        session.sendCommand("Set volume to 50");
+        session.addSystemMessage(`${emoji} Unmuted! Volume at 50%`);
+        break;
+      case "three_up":
+        session.sendCommand("Increase screen brightness by 20 percent");
+        session.addSystemMessage(`${emoji} Brightness up!`);
+        break;
+      case "four_up":
+        session.sendCommand("Decrease screen brightness by 20 percent");
+        session.addSystemMessage(`${emoji} Brightness down!`);
+        break;
+
+      // ── Motion-Based Actions ──
+      case "swipe_left":
+        session.addSystemMessage(`${emoji} Previous tab`);
+        break;
+      case "swipe_right":
+        session.addSystemMessage(`${emoji} Next tab`);
+        break;
+      case "swipe_up":
+        session.addSystemMessage(`${emoji} Scroll up!`);
+        break;
+      case "swipe_down":
+        session.addSystemMessage(`${emoji} Scroll down!`);
+        break;
+      case "circular_cw":
+        session.sendCommand("Increase the system volume by 15 percent");
+        session.addSystemMessage(`${emoji} Volume Up!`);
+        break;
+      case "circular_ccw":
+        session.sendCommand("Decrease the system volume by 15 percent");
+        session.addSystemMessage(`${emoji} Volume Down!`);
+        break;
+      case "palm_push":
+        session.confirm(true);
+        session.addSystemMessage(`${emoji} AI Action Confirmed!`);
+        break;
+      case "palm_pull":
+        session.confirm(false);
+        session.addSystemMessage(`${emoji} AI Action Cancelled!`);
+        break;
+      case "two_finger_swipe_left":
+        session.sendCommand("Switch to the previous virtual desktop or workspace");
+        session.addSystemMessage(`${emoji} Workspace Left`);
+        break;
+      case "two_finger_swipe_right":
+        session.sendCommand("Switch to the next virtual desktop or workspace");
+        session.addSystemMessage(`${emoji} Workspace Right`);
         break;
     }
   }
@@ -504,7 +749,7 @@
     class:active={isActive}
     class:loading={mpLoading}
     onclick={toggleGestures}
-    title={isActive ? "Stop gesture control" : "Start gesture control (16 gestures!)"}
+    title={isActive ? "Stop gesture control" : "Start gesture control (30+ gestures!)"}
   >
     <svg class="hand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
       <path d="M18 11V6a2 2 0 0 0-4 0v1" />
@@ -546,7 +791,7 @@
         </div>
       {/if}
       <!-- Gesture count badge -->
-      <div class="pip-badge">16 gestures</div>
+      <div class="pip-badge">30+ gestures</div>
     </div>
   {/if}
 

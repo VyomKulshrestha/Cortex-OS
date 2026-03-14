@@ -48,7 +48,7 @@ Heliox OS now includes a futuristic, Iron Man-style interface:
 
 - 🎤 **Voice Control**: Push-to-talk or use the always-on **"Hey Heliox"** wake word.
 - 🗣️ **Text-to-Speech**: Heliox OS speaks its responses aloud to you.
-- 🤚 **16 Hand Gestures**: Control your PC via webcam using gestures (Open Palm, Thumbs Up/Down, Peace, Fist, Point, Rock, OK, Swipe, Finger Gun, Call Me, Pinch, Middle Finger, Pinky Up, Vulcan).
+- 🤚 **30+ Hand Gestures**: Control your PC via webcam — static poses (Palm, Thumbs Up/Down, Peace, Fist, OK, Pinch, Vulcan, Devil Horns, Snap, etc.) and motion gestures (Swipe, Circular Volume, Palm Push/Pull, Two-Finger Workspace Switch).
 - 🖊️ **Air Drawing**: Point your index finger to draw glowing trails in the air.
 - 🌀 **Arc Reactor UI**: Animated spinning reactor logo, neural background, and particle explosion effects on task completion.
 - 📊 **Ambient HUD**: Holographic system monitor overlay for CPU, RAM, and Disk metrics.
