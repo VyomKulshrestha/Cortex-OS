@@ -50,9 +50,7 @@ class BackgroundTaskManager:
         self._tasks: dict[str, BackgroundTask] = {}
         self._broadcast: Callable[[str, Any], Coroutine[Any, Any, None]] | None = None
 
-    def set_broadcast(
-        self, fn: Callable[[str, Any], Coroutine[Any, Any, None]]
-    ) -> None:
+    def set_broadcast(self, fn: Callable[[str, Any], Coroutine[Any, Any, None]]) -> None:
         """Set the WebSocket broadcast function for sending alerts."""
         self._broadcast = fn
 

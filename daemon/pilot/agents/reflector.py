@@ -238,9 +238,7 @@ class Reflector:
         """Get reflection statistics."""
         if not self._db:
             return {}
-        cursor = await self._db.execute(
-            "SELECT COUNT(*), SUM(success), AVG(difficulty_score) FROM task_reflections"
-        )
+        cursor = await self._db.execute("SELECT COUNT(*), SUM(success), AVG(difficulty_score) FROM task_reflections")
         row = await cursor.fetchone()
         cursor2 = await self._db.execute("SELECT COUNT(*) FROM skill_registry")
         skills_row = await cursor2.fetchone()
