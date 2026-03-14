@@ -16,7 +16,7 @@
   let diskTotalGB = $state("0");
   let networkUp = $state("0 KB/s");
   let networkDown = $state("0 KB/s");
-  let hostname = $state("CORTEX");
+  let hostname = $state("HELIOX");
   let uptime = $state("0h 0m");
   let currentTime = $state("");
   let cpuHistory: number[] = $state(new Array(30).fill(0));
@@ -49,7 +49,7 @@
         diskPercent = Math.round(Number(info.disk_percent ?? 0));
         diskUsedGB = (Number(info.disk_used ?? 0) / (1024 ** 3)).toFixed(0);
         diskTotalGB = (Number(info.disk_total ?? 0) / (1024 ** 3)).toFixed(0);
-        hostname = String(info.hostname ?? "CORTEX").toUpperCase();
+        hostname = String(info.hostname ?? "HELIOX").toUpperCase();
         
         if (info.uptime_seconds) {
           const hrs = Math.floor(Number(info.uptime_seconds) / 3600);

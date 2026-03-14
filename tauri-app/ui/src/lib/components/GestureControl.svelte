@@ -38,12 +38,15 @@
   let hands: any = null;
   let animFrameId: number = 0;
   let lastGestureTime = 0;
+  let candidateGesture = "";
+  let candidateCount = 0;
+  const REQUIRED_FRAMES = 6;
   
   // Finger trail tracking for air drawing
   let fingerTrail: { x: number; y: number; t: number }[] = [];
   let prevIndexPos: { x: number; y: number } | null = null;
   
-  const GESTURE_COOLDOWN_MS = 1200;
+  const GESTURE_COOLDOWN_MS = 1500;
   const MAX_TRAIL_LENGTH = 60;
 
   // Gesture emoji map
@@ -51,6 +54,7 @@
     palm: "✋", thumbs_up: "👍", thumbs_down: "👎", peace: "✌️",
     fist: "👊", point_up: "👆", rock: "🤟", ok: "👌",
     call_me: "🤙", finger_gun: "🔫", swipe_left: "👈", swipe_right: "👉",
+    pinch: "🤏", middle_finger: "🖕", pinky_up: "🌸", vulcan: "🖖",
   };
 
   // ── MediaPipe Hands Loading ──
@@ -138,6 +142,8 @@
     confidence = 0;
     fingerTrail = [];
     prevIndexPos = null;
+    candidateGesture = "";
+    candidateCount = 0;
 
     if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = 0; }
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
@@ -154,6 +160,8 @@
       currentGesture = "";
       confidence = 0;
       prevIndexPos = null;
+      candidateGesture = "";
+      candidateCount = 0;
       return;
     }
 
@@ -163,20 +171,35 @@
     // Track index finger for air drawing
     trackFingerTrail(landmarks);
 
-    if (gesture.name && gesture.name !== currentGesture) {
-      currentGesture = gesture.name;
-      confidence = gesture.confidence;
-
-      const now = Date.now();
-      if (now - lastGestureTime > GESTURE_COOLDOWN_MS) {
-        lastGestureTime = now;
-        executeGestureAction(gesture.name);
-        gestureHistory = [...gestureHistory.slice(-4), gesture.name];
-        onGesture(gesture.name);
+    if (gesture.name) {
+      if (gesture.name === candidateGesture) {
+        candidateCount++;
+        if (candidateCount >= REQUIRED_FRAMES && gesture.name !== currentGesture) {
+          currentGesture = gesture.name;
+          confidence = gesture.confidence;
+          const now = Date.now();
+          if (now - lastGestureTime > GESTURE_COOLDOWN_MS) {
+            lastGestureTime = now;
+            executeGestureAction(gesture.name);
+            gestureHistory = [...gestureHistory.slice(-4), gesture.name];
+            onGesture(gesture.name);
+          }
+        }
+      } else {
+        candidateGesture = gesture.name;
+        candidateCount = 1;
       }
-    } else if (!gesture.name) {
-      currentGesture = "";
-      confidence = 0;
+    } else {
+      if (candidateGesture !== "") {
+        candidateGesture = "";
+        candidateCount = 1;
+      } else {
+        candidateCount++;
+        if (candidateCount >= 3) {
+          currentGesture = "";
+          confidence = 0;
+        }
+      }
     }
 
     drawLandmarks(landmarks);
@@ -268,9 +291,31 @@
       return Math.sqrt(dx * dx + dy * dy);
     };
 
+    // 🖖 Vulcan Salute
+    if (indexUp && middleUp && ringUp && pinkyUp && !thumbExtended) {
+      if (dist(MIDDLE_TIP, RING_TIP) > 0.08) {
+        return { name: "vulcan", confidence: 0.85 };
+      }
+    }
+
     // 👌 OK Sign — thumb tip touching index tip
     if (dist(THUMB_TIP, INDEX_TIP) < 0.05 && middleUp && ringUp && pinkyUp) {
       return { name: "ok", confidence: 0.85 };
+    }
+
+    // 🤏 Pinch — thumb tip close to index tip, others curled
+    if (dist(THUMB_TIP, INDEX_TIP) < 0.05 && !middleUp && !ringUp && !pinkyUp) {
+      return { name: "pinch", confidence: 0.85 };
+    }
+
+    // 🖕 Middle Finger
+    if (!indexUp && middleUp && !ringUp && !pinkyUp && !thumbExtended) {
+      return { name: "middle_finger", confidence: 0.9 };
+    }
+
+    // 🌸 Pinky Up
+    if (!indexUp && !middleUp && !ringUp && pinkyUp && !thumbExtended) {
+      return { name: "pinky_up", confidence: 0.85 };
     }
 
     // 🔫 Finger Gun — index + thumb extended, others down
@@ -376,6 +421,19 @@
       case "swipe_right":
         session.addSystemMessage(`${emoji} Next tab`);
         break;
+      case "pinch":
+        session.addSystemMessage(`${emoji} Pinch / Grab`);
+        break;
+      case "middle_finger":
+        session.sendCommand("Cancel all tasks absolutely immediately");
+        break;
+      case "pinky_up":
+        session.addSystemMessage(`${emoji} Fancy!`);
+        break;
+      case "vulcan":
+        session.sendCommand("Show detailed system diagnostics and status");
+        session.addSystemMessage(`${emoji} Live long and prosper.`);
+        break;
     }
   }
 
@@ -446,7 +504,7 @@
     class:active={isActive}
     class:loading={mpLoading}
     onclick={toggleGestures}
-    title={isActive ? "Stop gesture control" : "Start gesture control (12 gestures!)"}
+    title={isActive ? "Stop gesture control" : "Start gesture control (16 gestures!)"}
   >
     <svg class="hand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
       <path d="M18 11V6a2 2 0 0 0-4 0v1" />
@@ -488,7 +546,7 @@
         </div>
       {/if}
       <!-- Gesture count badge -->
-      <div class="pip-badge">12 gestures</div>
+      <div class="pip-badge">16 gestures</div>
     </div>
   {/if}
 

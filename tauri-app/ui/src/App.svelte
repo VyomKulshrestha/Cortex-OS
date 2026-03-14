@@ -41,6 +41,15 @@
   // Handle gesture events for particle effects
   function onGestureDetected(gesture: string) {
     particleBurst?.gestureBurst(gesture);
+    if (gesture === "swipe_left") {
+      if (activeTab === "settings") activeTab = "log";
+      else if (activeTab === "log") activeTab = "chat";
+    } else if (gesture === "swipe_right") {
+      if (activeTab === "chat") activeTab = "log";
+      else if (activeTab === "log") activeTab = "settings";
+    } else if (gesture === "call_me") {
+      activeTab = "settings";
+    }
   }
 
   function scrollToBottom() {
