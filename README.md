@@ -34,13 +34,13 @@
 
 ## Why Heliox OS?
 
-Unlike simple command runners, Heliox OS is a **true agentic system** with a Plan → Execute → Verify → Retry pipeline:
+Unlike simple command runners, Heliox OS is a **true agentic system** inspired by robust autonomous architectures like OpenClaw, running a continuous ReAct loop:
 
-1. **Planner** — LLM converts your natural language into a structured multi-step action plan
-2. **Executor** — Each action is dispatched to native OS APIs (never GUI automation)
-3. **Verifier** — Post-execution verification confirms the action succeeded
-4. **Auto-Fix** — If generated code fails, the LLM automatically fixes and retries it
-5. **Security** — Five-tier permission system with confirmation gates and rollback support
+1. **Gateway Hub & Memory** — LLM evaluates persistent memory context before reasoning.
+2. **Planner** — Converts natural language into a structured multi-step action plan.
+3. **Executor** — Each action is dispatched to native OS APIs or communication integrations (never flimsy GUI automation).
+4. **Verifier** — Post-execution verification confirms the action succeeded and feeds results back into the loop.
+5. **Security** — Five-tier permission system with confirmation gates and rollback support.
 
 ## 🤖 JARVIS Mode (New!)
 
@@ -48,7 +48,7 @@ Heliox OS now includes a futuristic, Iron Man-style interface:
 
 - 🎤 **Voice Control**: Push-to-talk or use the always-on **"Hey Heliox"** wake word.
 - 🗣️ **Text-to-Speech**: Heliox OS speaks its responses aloud to you.
-- 🤚 **12 Hand Gestures**: Control your PC via webcam using gestures (Open Palm, Thumbs Up/Down, Peace, Fist, Point, Rock, OK, Swipe, Finger Gun, Call Me).
+- 🤚 **16 Hand Gestures**: Control your PC via webcam using gestures (Open Palm, Thumbs Up/Down, Peace, Fist, Point, Rock, OK, Swipe, Finger Gun, Call Me, Pinch, Middle Finger, Pinky Up, Vulcan).
 - 🖊️ **Air Drawing**: Point your index finger to draw glowing trails in the air.
 - 🌀 **Arc Reactor UI**: Animated spinning reactor logo, neural background, and particle explosion effects on task completion.
 - 📊 **Ambient HUD**: Holographic system monitor overlay for CPU, RAM, and Disk metrics.
@@ -145,22 +145,25 @@ Auto-detects: winget, choco, brew, apt, dnf, pacman
 
 ```mermaid
 graph TD
-    User([User Input: Voice, Text, Gestures]) --> GUI
+    User([User Input: Voice, Text, Gestures]) --> Gateway
 
-    subgraph "Frontend (Tauri + Svelte)"
+    subgraph "Frontend Gateway (Tauri + Svelte)"
+        Gateway[WebSocket Hub]
         GUI[Desktop Window]
         HUD[Ambient System HUD]
         VC[Voice Controller]
         GC[Hand Gesture Controller]
+        Gateway --- GUI
         GUI --- HUD
         GUI --- VC
         GUI --- GC
     end
 
-    GUI --> |Action Request| Daemon
+    Gateway --> |Normalized Action Request| Daemon
 
-    subgraph "Backend Daemon (Python)"
-        Daemon[Agent Server] --> Planner[LLM Planner]
+    subgraph "Agent Runtime (Python)"
+        Daemon[Agent Server / ReAct Loop] --> Memory[(Long-term Memory)]
+        Daemon --> Planner[LLM Planner]
         Planner --> Router{Model Router}
         Router --> |Cloud| Ext_LLM(Gemini / OpenAI / Claude)
         Router --> |Local| Int_LLM(Ollama)
@@ -168,10 +171,11 @@ graph TD
         Security --> |Verified| Executor[System Executor]
     end
 
-    subgraph "OS Integration"
+    subgraph "OS Integrations & Skills"
         Executor --> File(Filesystem)
         Executor --> Proc(Processes)
         Executor --> Web(Browser Automation)
+        Executor --> Comms(Messaging APIs: Discord, WhatsApp)
         Executor --> Shell(Shell / Registry)
     end
 ```
