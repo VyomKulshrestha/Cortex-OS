@@ -39,6 +39,14 @@ export interface Message {
   verification?: VerificationData;
 }
 
+export interface LiveActionState {
+  index: number;
+  action: PlanAction;
+  status: "pending" | "running" | "success" | "error";
+  output?: string;
+  error?: string;
+}
+
 interface SessionState {
   daemonConnected: boolean;
   loading: boolean;
@@ -48,6 +56,7 @@ interface SessionState {
   confirmPlanId: string;
   confirmActions: PlanAction[];
   phase: string;
+  liveActions: LiveActionState[];
 }
 
 const initialState: SessionState = {
@@ -59,6 +68,7 @@ const initialState: SessionState = {
   confirmPlanId: "",
   confirmActions: [],
   phase: "",
+  liveActions: [],
 };
 
 function createSession() {
@@ -72,15 +82,20 @@ function createSession() {
         update((s) => ({ ...s, phase: String(p.phase ?? "") }));
         break;
 
-      case "plan_preview": {
         const plan: Plan = {
           plan_id: String(p.plan_id ?? ""),
           explanation: String(p.explanation ?? ""),
           actions: (p.actions ?? []) as PlanAction[],
         };
+        const newLiveActions: LiveActionState[] = plan.actions.map((a, i) => ({
+          index: i,
+          action: a,
+          status: "pending"
+        }));
         update((s) => ({
           ...s,
           currentPlan: plan,
+          liveActions: newLiveActions,
           messages: [
             ...s.messages,
             {
@@ -91,6 +106,39 @@ function createSession() {
             },
           ],
         }));
+        break;
+      }
+      
+      case "action_start": {
+        update(s => {
+          const nextIdx = s.liveActions.findIndex(a => a.status === "pending");
+          if (nextIdx !== -1) {
+            const live = [...s.liveActions];
+            live[nextIdx] = { ...live[nextIdx], status: "running" };
+            return { ...s, liveActions: live };
+          }
+          return s;
+        });
+        break;
+      }
+      
+      case "action_complete": {
+        const resultObj = p.result as Record<string, unknown>;
+        const success = Boolean(resultObj.success);
+        update(s => {
+          const runningIdx = s.liveActions.findIndex(a => a.status === "running");
+          if (runningIdx !== -1) {
+            const live = [...s.liveActions];
+            live[runningIdx] = { 
+              ...live[runningIdx], 
+              status: success ? "success" : "error",
+              output: String(resultObj.output || ""),
+              error: String(resultObj.error || "")
+            };
+            return { ...s, liveActions: live };
+          }
+          return s;
+        });
         break;
       }
 
@@ -121,6 +169,7 @@ function createSession() {
       loading: true,
       phase: "",
       currentPlan: null,
+      liveActions: [],
       confirmRequired: false,
       confirmPlanId: "",
       messages: [

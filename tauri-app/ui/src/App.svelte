@@ -10,6 +10,7 @@
   import ArcReactor from "./lib/components/ArcReactor.svelte";
   import NeuralBackground from "./lib/components/NeuralBackground.svelte";
   import ParticleBurst from "./lib/components/ParticleBurst.svelte";
+  import ExecutionGraph from "./lib/components/ExecutionGraph.svelte";
   import { session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
@@ -144,9 +145,11 @@
             {/each}
 
             {#if $session.loading}
+              <ExecutionGraph />
+              
               <div class="message system">
                 <div class="msg-header">
-                  <span class="msg-label">CORTEX</span>
+                  <span class="msg-label">HELIOX</span>
                   <span class="phase-badge">{$session.phase || "thinking"}</span>
                 </div>
                 <span class="msg-text loading-dots">
@@ -259,7 +262,7 @@
 
   {:else}
     <div class="message system-msg">
-      <span class="msg-label">CORTEX</span>
+      <span class="msg-label">HELIOX</span>
       <span class="msg-text">{msg.text}</span>
     </div>
   {/if}

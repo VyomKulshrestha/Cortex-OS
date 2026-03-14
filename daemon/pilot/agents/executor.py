@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+import typing
 from typing import TYPE_CHECKING
 
 from pilot.actions import (
@@ -241,7 +242,12 @@ class Executor:
             ActionType.API_SCRAPE: self._exec_api_scrape,
         }
 
-    async def execute(self, plan: ActionPlan) -> list[ActionResult]:
+    async def execute(
+        self,
+        plan: ActionPlan,
+        on_action_start: typing.Callable[[Action], typing.Awaitable[None]] | None = None,
+        on_action_complete: typing.Callable[[ActionResult], typing.Awaitable[None]] | None = None,
+    ) -> list[ActionResult]:
         """Execute all actions in a plan sequentially, with output chaining."""
         plan_id = str(uuid.uuid4())[:8]
         results: list[ActionResult] = []
@@ -316,12 +322,19 @@ class Executor:
 
         for i, action in enumerate(plan.actions):
             self._audit.log_action_start(action, plan_id)
+            
+            if on_action_start:
+                await on_action_start(action)
 
             # Auto-inject previous output into action content/code
             action = self._inject_previous_output(action)
 
             result = await self._execute_single(action, snapshot_id)
             self._audit.log_action_result(result, plan_id)
+            
+            if on_action_complete:
+                await on_action_complete(result)
+                
             results.append(result)
 
             # Store output for chaining

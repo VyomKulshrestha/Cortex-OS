@@ -208,7 +208,18 @@ class PilotServer:
 
             # Phase 3: Execution
             await ws.send(_notification("status", {"phase": "executing"}))
-            results = await self._executor.execute(plan)
+            
+            async def _on_action_start(action: Any) -> None:
+                await ws.send(_notification("action_start", {"action": action.model_dump()}))
+                
+            async def _on_action_complete(result: Any) -> None:
+                await ws.send(_notification("action_complete", {"result": result.model_dump()}))
+
+            results = await self._executor.execute(
+                plan,
+                on_action_start=_on_action_start,
+                on_action_complete=_on_action_complete
+            )
             all_results = results
 
             # Phase 4: Verification
