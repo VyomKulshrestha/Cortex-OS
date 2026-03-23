@@ -77,6 +77,7 @@ class PilotServer:
         self._multi_agent: Any = None
         self._background: Any = None
         self._orchestrator: Any = None
+        self._fusion: Any = None
         self._memory: Any = None
         self._vault: Any = None
         self._running = False
@@ -133,6 +134,12 @@ class PilotServer:
         self._orchestrator.register_agent(CommunicationAgent(model_router, self._executor))
         await self._orchestrator.start_all()
 
+        # Multimodal Fusion Engine — voice + gesture intent fusion
+        from pilot.multimodal.fusion import MultimodalFusionEngine
+
+        self._fusion = MultimodalFusionEngine()
+        self._fusion.set_broadcast(self._broadcast_notification)
+
         self._handlers = {
             "execute": self._handle_execute,
             "confirm": self._handle_confirm,
@@ -157,6 +164,10 @@ class PilotServer:
             "agent_stats": self._handle_agent_stats,
             "agent_capabilities": self._handle_agent_capabilities,
             "agent_spawn": self._handle_agent_spawn,
+            # Multimodal fusion endpoints
+            "voice_event": self._handle_voice_event,
+            "gesture_event": self._handle_gesture_event,
+            "multimodal_stats": self._handle_multimodal_stats,
         }
 
     async def _broadcast_notification(self, method: str, params: Any) -> None:
@@ -559,6 +570,50 @@ class PilotServer:
             if agent:
                 return {"status": "spawned", "agent_id": agent.agent_id}
         return {"status": "error", "message": "Failed to spawn agent"}
+
+    # -- Multimodal Fusion --
+
+    async def _handle_voice_event(self, params: dict, ws: ServerConnection) -> dict:
+        """Receive a voice event from the frontend and feed it to fusion engine."""
+        if not self._fusion:
+            return {"status": "error", "message": "Fusion engine not initialized"}
+
+        from pilot.multimodal.fusion import InputEvent, ModalityType
+
+        event = InputEvent(
+            modality=ModalityType.VOICE,
+            transcript=params.get("transcript", ""),
+            voice_confidence=params.get("confidence", 0.8),
+            is_final=params.get("is_final", False),
+        )
+        intent = await self._fusion.on_voice_event(event)
+        if intent:
+            return {"status": "fused", "intent": intent.to_dict()}
+        return {"status": "buffered"}
+
+    async def _handle_gesture_event(self, params: dict, ws: ServerConnection) -> dict:
+        """Receive a gesture event from the frontend and feed it to fusion engine."""
+        if not self._fusion:
+            return {"status": "error", "message": "Fusion engine not initialized"}
+
+        from pilot.multimodal.fusion import InputEvent, ModalityType
+
+        event = InputEvent(
+            modality=ModalityType.GESTURE,
+            gesture_name=params.get("gesture", ""),
+            gesture_confidence=params.get("confidence", 0.8),
+            gesture_data=params.get("data", {}),
+        )
+        intent = await self._fusion.on_gesture_event(event)
+        if intent:
+            return {"status": "fused", "intent": intent.to_dict()}
+        return {"status": "buffered"}
+
+    async def _handle_multimodal_stats(self, params: dict, ws: ServerConnection) -> dict:
+        """Return multimodal fusion engine statistics."""
+        if self._fusion:
+            return self._fusion.get_stats()
+        return {"error": "Fusion engine not initialized"}
 
     # -- Broadcast --
 
