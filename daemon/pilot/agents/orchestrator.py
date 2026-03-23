@@ -133,7 +133,7 @@ class AgentOrchestrator:
             await self._broadcast_fn(
                 "agent_routing",
                 {
-                    "assigned_agents": [r.value for r in routing.keys()],
+                    "assigned_agents": [r.value for r in routing],
                     "is_multi_agent": len(routing) > 1,
                 },
             )
