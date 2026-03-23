@@ -76,6 +76,7 @@ class PilotServer:
         self._reflector: Any = None
         self._multi_agent: Any = None
         self._background: Any = None
+        self._orchestrator: Any = None
         self._memory: Any = None
         self._vault: Any = None
         self._running = False
@@ -84,11 +85,17 @@ class PilotServer:
     async def initialize(self) -> None:
         """Initialize all agent components."""
         from pilot.agents.background import BackgroundTaskManager
+        from pilot.agents.code_agent import CodeAgent
+        from pilot.agents.comm_agent import CommunicationAgent
         from pilot.agents.executor import Executor
+        from pilot.agents.monitor_agent import MonitorAgent
         from pilot.agents.multi_agent import MultiAgentRouter
+        from pilot.agents.orchestrator import AgentOrchestrator
         from pilot.agents.planner import Planner
         from pilot.agents.reflector import Reflector
+        from pilot.agents.system_agent import SystemAgent
         from pilot.agents.verifier import Verifier
+        from pilot.agents.web_agent import WebAgent
         from pilot.memory.store import MemoryStore
         from pilot.models.router import ModelRouter
         from pilot.security.audit import AuditLogger
@@ -116,6 +123,16 @@ class PilotServer:
         self._background.set_broadcast(self._broadcast_notification)
         self._background.register_builtin_monitors()
 
+        # Multi-Agent Orchestrator — register all specialist agents
+        self._orchestrator = AgentOrchestrator(model_router)
+        self._orchestrator.set_broadcast(self._broadcast_notification)
+        self._orchestrator.register_agent(SystemAgent(model_router, self._executor))
+        self._orchestrator.register_agent(CodeAgent(model_router, self._executor))
+        self._orchestrator.register_agent(WebAgent(model_router, self._executor))
+        self._orchestrator.register_agent(MonitorAgent(model_router, self._background))
+        self._orchestrator.register_agent(CommunicationAgent(model_router, self._executor))
+        await self._orchestrator.start_all()
+
         self._handlers = {
             "execute": self._handle_execute,
             "confirm": self._handle_confirm,
@@ -136,6 +153,10 @@ class PilotServer:
             "background_start": self._handle_background_start,
             "background_stop": self._handle_background_stop,
             "agent_routing": self._handle_agent_routing,
+            # Multi-agent orchestrator endpoints
+            "agent_stats": self._handle_agent_stats,
+            "agent_capabilities": self._handle_agent_capabilities,
+            "agent_spawn": self._handle_agent_spawn,
         }
 
     async def _broadcast_notification(self, method: str, params: Any) -> None:
@@ -195,7 +216,7 @@ class PilotServer:
 
         _start_time = time.time()
 
-        # Multi-agent routing analysis
+        # Multi-agent routing analysis (legacy + orchestrator)
         routing = self._multi_agent.get_routing_summary(user_input)
         await ws.send(_notification("agent_routing", routing))
 
@@ -255,9 +276,23 @@ class PilotServer:
             async def _on_action_complete(result: Any) -> None:
                 await ws.send(_notification("action_complete", {"result": result.model_dump()}))
 
-            results = await self._executor.execute(
-                plan, on_action_start=_on_action_start, on_action_complete=_on_action_complete
-            )
+            # Route through multi-agent orchestrator
+            if self._orchestrator:
+                # Send orchestrator routing info
+                orch_routing = self._orchestrator.get_routing_summary(plan)
+                await ws.send(_notification("orchestrator_routing", orch_routing))
+                results = await self._orchestrator.execute_plan(
+                    user_input,
+                    plan,
+                    on_action_start=_on_action_start,
+                    on_action_complete=_on_action_complete,
+                )
+            else:
+                results = await self._executor.execute(
+                    plan,
+                    on_action_start=_on_action_start,
+                    on_action_complete=_on_action_complete,
+                )
             all_results = results
 
             # Phase 4: Verification
@@ -487,7 +522,43 @@ class PilotServer:
     async def _handle_agent_routing(self, params: dict, ws: ServerConnection) -> dict:
         """Analyze which specialist agent(s) would handle a given input."""
         query = params.get("input", "")
-        return self._multi_agent.get_routing_summary(query)
+        result = self._multi_agent.get_routing_summary(query)
+        # Enrich with orchestrator info if available
+        if self._orchestrator:
+            result["orchestrator"] = self._orchestrator.get_input_routing_summary(query)
+        return result
+
+    async def _handle_agent_stats(self, params: dict, ws: ServerConnection) -> dict:
+        """Return performance stats for all registered agents."""
+        if self._orchestrator:
+            return self._orchestrator.get_all_stats()
+        return {"error": "Orchestrator not initialized"}
+
+    async def _handle_agent_capabilities(self, params: dict, ws: ServerConnection) -> dict:
+        """Return all agent capabilities grouped by specialist."""
+        if self._orchestrator:
+            return self._orchestrator.get_all_capabilities()
+        return {"error": "Orchestrator not initialized"}
+
+    async def _handle_agent_spawn(self, params: dict, ws: ServerConnection) -> dict:
+        """Dynamically spawn a new specialist agent."""
+        role_str = params.get("role", "")
+        from pilot.agents.base_agent import AgentRole
+
+        try:
+            role = AgentRole(role_str)
+        except ValueError:
+            return {"status": "error", "message": f"Unknown role: {role_str}"}
+
+        if self._orchestrator:
+            agent = await self._orchestrator.spawn_agent(
+                role,
+                executor=self._executor,
+                background_manager=self._background,
+            )
+            if agent:
+                return {"status": "spawned", "agent_id": agent.agent_id}
+        return {"status": "error", "message": "Failed to spawn agent"}
 
     # -- Broadcast --
 
@@ -520,6 +591,8 @@ class PilotServer:
 
     async def stop(self) -> None:
         self._running = False
+        if self._orchestrator:
+            await self._orchestrator.stop_all()
         if self._background:
             self._background.stop_all()
         for pending in self._pending_confirms.values():
