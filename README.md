@@ -34,13 +34,15 @@
 
 ## Why Heliox OS?
 
-Unlike simple command runners, Heliox OS is a **true agentic system** inspired by robust autonomous architectures like OpenClaw, running a continuous ReAct loop:
+Unlike simple command runners, Heliox OS is a **true agentic system** inspired by robust autonomous architectures like OpenClaw, running a continuous ReAct loop with a **modular multi-agent orchestrator**:
 
 1. **Gateway Hub & Memory** — LLM evaluates persistent memory context before reasoning.
 2. **Planner** — Converts natural language into a structured multi-step action plan.
-3. **Executor** — Each action is dispatched to native OS APIs or communication integrations (never flimsy GUI automation).
-4. **Verifier** — Post-execution verification confirms the action succeeded and feeds results back into the loop.
-5. **Security** — Five-tier permission system with confirmation gates and rollback support.
+3. **Agent Orchestrator** — Routes each action to the correct specialist agent (System, Code, Web, Monitor, Communication).
+4. **Specialist Agents** — Five domain experts execute actions via native OS APIs (never flimsy GUI automation).
+5. **Verifier** — Post-execution verification confirms the action succeeded and feeds results back into the loop.
+6. **Reflector** — Self-improvement engine learns from successes and failures.
+7. **Security** — Five-tier permission system with confirmation gates and rollback support.
 
 ## 🤖 JARVIS Mode (New!)
 
@@ -52,6 +54,23 @@ Heliox OS now includes a futuristic, Iron Man-style interface:
 - 🖊️ **Air Drawing**: Point your index finger to draw glowing trails in the air.
 - 🌀 **Arc Reactor UI**: Animated spinning reactor logo, neural background, and particle explosion effects on task completion.
 - 📊 **Ambient HUD**: Holographic system monitor overlay for CPU, RAM, and Disk metrics.
+- 🔬 **ReAct Pipeline Visualizer**: Real-time animated graph showing the AI's reasoning process — each stage (Memory → Planning → Routing → Execution → Verification → Reflection) lights up as it runs.
+
+## 🧠 Multi-Agent Orchestrator
+
+Heliox OS uses a **modular multi-agent architecture** where specialized agents collaborate to solve complex tasks:
+
+| Agent | Domain | Key Skills |
+|-------|--------|------------|
+| 🖥️ **System Agent** | OS Operations | Files, processes, services, power, input control, screen vision, triggers |
+| 💻 **Code Agent** | Development | Code generation, execution, debugging, dev tooling (git, pip, npm) |
+| 🌐 **Web Agent** | Web & APIs | Browser automation, scraping, HTTP requests, downloads |
+| 📊 **Monitor Agent** | Monitoring | CPU, RAM, disk, network monitoring with threshold alerts |
+| 📡 **Communication Agent** | Messaging | Email, Slack, Discord, webhooks, desktop notifications |
+
+**How it works:** The Planner generates an action plan → the Orchestrator analyzes each action type → routes to the correct specialist → agents execute in sequence → results merge for verification.
+
+**Dynamic Spawning:** Agents can be created on-demand at runtime via the `agent_spawn` API endpoint.
 
 ## 🧪 Tested With 10 Complex Tasks — 80%+ Pass Rate
 
@@ -145,39 +164,52 @@ Auto-detects: winget, choco, brew, apt, dnf, pacman
 
 ```mermaid
 graph TD
-    User([User Input: Voice, Text, Gestures]) --> Gateway
+    User(["User Input: Voice, Text, Gestures"]) --> Gateway
 
-    subgraph "Frontend Gateway (Tauri + Svelte)"
-        Gateway[WebSocket Hub]
-        GUI[Desktop Window]
-        HUD[Ambient System HUD]
-        VC[Voice Controller]
-        GC[Hand Gesture Controller]
+    subgraph "Frontend Gateway - Tauri + Svelte"
+        Gateway["WebSocket Hub"]
+        GUI["Desktop Window"]
+        HUD["Ambient System HUD"]
+        VC["Voice Controller"]
+        GC["Hand Gesture Controller"]
+        RPV["ReAct Pipeline Visualizer"]
         Gateway --- GUI
         GUI --- HUD
         GUI --- VC
         GUI --- GC
+        GUI --- RPV
     end
 
-    Gateway --> |Normalized Action Request| Daemon
+    Gateway --> Daemon
 
-    subgraph "Agent Runtime (Python)"
-        Daemon[Agent Server / ReAct Loop] --> Memory[(Long-term Memory)]
-        Daemon --> Planner[LLM Planner]
-        Planner --> Router{Model Router}
-        Router --> |Cloud| Ext_LLM(Gemini / OpenAI / Claude)
-        Router --> |Local| Int_LLM(Ollama)
-        Planner --> |Action JSON| Security[Security Gate / Sandbox]
-        Security --> |Verified| Executor[System Executor]
+    subgraph "Agent Runtime - Python"
+        Daemon["Agent Server / ReAct Loop"] --> Memory[("Long-term Memory")]
+        Daemon --> Planner["LLM Planner"]
+        Planner --> Router{"Model Router"}
+        Router --> Ext_LLM("Gemini / OpenAI / Claude")
+        Router --> Int_LLM("Ollama")
+        Planner --> Security["Security Gate"]
+        Security --> Orchestrator["Agent Orchestrator"]
     end
 
-    subgraph "OS Integrations & Skills"
-        Executor --> File(Filesystem)
-        Executor --> Proc(Processes)
-        Executor --> Web(Browser Automation)
-        Executor --> Comms(Messaging APIs: Discord, WhatsApp)
-        Executor --> Shell(Shell / Registry)
+    subgraph "Multi-Agent System"
+        Orchestrator --> SA["System Agent"]
+        Orchestrator --> CA["Code Agent"]
+        Orchestrator --> WA["Web Agent"]
+        Orchestrator --> MA["Monitor Agent"]
+        Orchestrator --> COMM["Communication Agent"]
     end
+
+    SA --> Executor["System Executor"]
+    CA --> Executor
+    WA --> Executor
+    COMM --> Executor
+    MA --> BG["Background Tasks"]
+
+    Executor --> Verifier["Verifier"]
+    BG --> Verifier
+    Verifier --> Reflector["Reflector"]
+    Reflector --> Memory
 ```
 
 ## 🚀 Installation
