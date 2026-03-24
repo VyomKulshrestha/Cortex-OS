@@ -16,7 +16,7 @@ from typing import Any
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
-from pilot.config import LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
+from pilot.config import DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
 
 logger = logging.getLogger("pilot.server")
 
@@ -79,6 +79,10 @@ class PilotServer:
         self._orchestrator: Any = None
         self._fusion: Any = None
         self._reasoning: Any = None
+        self._decomposer: Any = None
+        self._sandbox: Any = None
+        self._prompt_improver: Any = None
+        self._plugin_registry: Any = None
         self._memory: Any = None
         self._vault: Any = None
         self._running = False
@@ -147,6 +151,29 @@ class PilotServer:
         self._reasoning = ReasoningEmitter()
         self._reasoning.set_broadcast(self._broadcast_notification)
 
+        # Task Decomposition Engine
+        from pilot.agents.decomposer import TaskDecomposer
+
+        self._decomposer = TaskDecomposer(model_router)
+
+        # Simulation Sandbox — pre-execution risk analysis
+        from pilot.agents.sandbox import SimulationSandbox
+
+        self._sandbox = SimulationSandbox()
+
+        # Self-Improving Prompt System
+        from pilot.agents.prompt_improver import PromptImprover
+
+        self._prompt_improver = PromptImprover()
+        await self._prompt_improver.initialize(str(DB_FILE))
+
+        # Plugin Ecosystem
+        from pilot.plugins import PluginRegistry
+
+        self._plugin_registry = PluginRegistry()
+        plugin_count = self._plugin_registry.discover()
+        logger.info("Plugins loaded: %d", plugin_count)
+
         self._handlers = {
             "execute": self._handle_execute,
             "confirm": self._handle_confirm,
@@ -178,6 +205,17 @@ class PilotServer:
             # Reasoning visualization endpoints
             "reasoning_log": self._handle_reasoning_log,
             "reasoning_stats": self._handle_reasoning_stats,
+            # Task decomposition endpoints
+            "decompose_task": self._handle_decompose_task,
+            # Simulation sandbox endpoints
+            "simulate_plan": self._handle_simulate_plan,
+            # Prompt improvement endpoints
+            "prompt_strategies": self._handle_prompt_strategies,
+            "prompt_stats": self._handle_prompt_stats,
+            # Plugin ecosystem endpoints
+            "plugin_list": self._handle_plugin_list,
+            "plugin_tools": self._handle_plugin_tools,
+            "plugin_toggle": self._handle_plugin_toggle,
         }
 
     async def _broadcast_notification(self, method: str, params: Any) -> None:
@@ -847,6 +885,80 @@ class PilotServer:
         if self._reasoning:
             return self._reasoning.get_stats()
         return {"error": "Reasoning emitter not initialized"}
+
+    # -- Task Decomposition --
+
+    async def _handle_decompose_task(self, params: dict, ws: ServerConnection) -> dict:
+        """Decompose a complex goal into subtasks."""
+        goal = params.get("goal", "")
+        if not goal:
+            return {"error": "No goal provided"}
+        if self._decomposer:
+            decomp = await self._decomposer.decompose(goal)
+            return decomp.to_dict()
+        return {"error": "Decomposer not initialized"}
+
+    # -- Simulation Sandbox --
+
+    async def _handle_simulate_plan(self, params: dict, ws: ServerConnection) -> dict:
+        """Simulate a plan and return an impact report without execution."""
+        if not self._sandbox:
+            return {"error": "Sandbox not initialized"}
+
+        # Reconstruct plan from params or use last plan
+        plan_id = params.get("plan_id", "")
+        pending = self._pending_confirms.get(plan_id)
+        if pending and pending.plan:
+            report = self._sandbox.simulate(pending.plan)
+            return report.to_dict()
+
+        return {"error": "No plan found to simulate"}
+
+    # -- Self-Improving Prompt System --
+
+    async def _handle_prompt_strategies(self, params: dict, ws: ServerConnection) -> dict:
+        """Get proven prompt strategies for a task."""
+        query = params.get("query", "")
+        if not query:
+            return {"strategies": ""}
+        if self._prompt_improver:
+            strategies = await self._prompt_improver.get_relevant_strategies(query)
+            return {"strategies": strategies}
+        return {"error": "Prompt improver not initialized"}
+
+    async def _handle_prompt_stats(self, params: dict, ws: ServerConnection) -> dict:
+        """Return prompt improvement statistics."""
+        if self._prompt_improver:
+            return await self._prompt_improver.get_stats()
+        return {"error": "Prompt improver not initialized"}
+
+    # -- Plugin Ecosystem --
+
+    async def _handle_plugin_list(self, params: dict, ws: ServerConnection) -> dict:
+        """List all loaded plugins."""
+        if self._plugin_registry:
+            return self._plugin_registry.get_stats()
+        return {"error": "Plugin registry not initialized"}
+
+    async def _handle_plugin_tools(self, params: dict, ws: ServerConnection) -> dict:
+        """List all available plugin tools."""
+        if self._plugin_registry:
+            return {"tools": self._plugin_registry.get_all_tools()}
+        return {"error": "Plugin registry not initialized"}
+
+    async def _handle_plugin_toggle(self, params: dict, ws: ServerConnection) -> dict:
+        """Enable or disable a plugin."""
+        name = params.get("name", "")
+        enabled = params.get("enabled", True)
+        if not name:
+            return {"error": "No plugin name provided"}
+        if self._plugin_registry:
+            if enabled:
+                ok = self._plugin_registry.enable_plugin(name)
+            else:
+                ok = self._plugin_registry.disable_plugin(name)
+            return {"success": ok, "plugin": name, "enabled": enabled}
+        return {"error": "Plugin registry not initialized"}
 
     # -- Broadcast --
 

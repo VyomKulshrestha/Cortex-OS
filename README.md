@@ -173,22 +173,36 @@ graph TD
         VC["Voice Controller"]
         GC["Hand Gesture Controller"]
         RPV["ReAct Pipeline Visualizer"]
+        TVS["Thought Visualization 🧠"]
         Gateway --- GUI
         GUI --- HUD
         GUI --- VC
         GUI --- GC
         GUI --- RPV
+        RPV --- TVS
     end
 
-    Gateway --> Daemon
+    Gateway --> Fusion
+
+    subgraph "Multimodal Fusion"
+        Fusion["Intent Fusion Engine"]
+        Fusion --> |"voice + gesture"| FusedIntent["Fused Intent"]
+    end
+
+    FusedIntent --> Daemon
 
     subgraph "Agent Runtime - Python"
         Daemon["Agent Server / ReAct Loop"] --> Memory[("Long-term Memory")]
-        Daemon --> Planner["LLM Planner"]
+        Memory --> |"Vector + Semantic"| ChromaDB[("ChromaDB")]
+        Daemon --> Decomposer["Task Decomposer"]
+        Decomposer --> Planner["LLM Planner"]
+        Planner --> PromptImprover["Prompt Improver"]
+        PromptImprover --> |"reuse strategies"| Planner
         Planner --> Router{"Model Router"}
         Router --> Ext_LLM("Gemini / OpenAI / Claude")
         Router --> Int_LLM("Ollama")
-        Planner --> Security["Security Gate"]
+        Planner --> Sandbox["Simulation Sandbox"]
+        Sandbox --> |"risk report"| Security["Security Gate"]
         Security --> Orchestrator["Agent Orchestrator"]
     end
 
@@ -200,6 +214,17 @@ graph TD
         Orchestrator --> COMM["Communication Agent"]
     end
 
+    subgraph "Plugin Ecosystem"
+        PluginReg["Plugin Registry"]
+        PluginReg --> |"tools"| Orchestrator
+        P1["heliox-plugin-docker"]
+        P2["heliox-plugin-spotify"]
+        P3["heliox-plugin-k8s"]
+        P1 --- PluginReg
+        P2 --- PluginReg
+        P3 --- PluginReg
+    end
+
     SA --> Executor["System Executor"]
     CA --> Executor
     WA --> Executor
@@ -209,8 +234,84 @@ graph TD
     Executor --> Verifier["Verifier"]
     BG --> Verifier
     Verifier --> Reflector["Reflector"]
+    Reflector --> PromptImprover
     Reflector --> Memory
+    Reflector --> SkillReg["Skill Registry"]
+
+    subgraph "Reasoning Telemetry"
+        Daemon -.-> |"events"| ReasoningEmitter["Reasoning Emitter"]
+        ReasoningEmitter -.-> |"WebSocket"| TVS
+    end
 ```
+
+## 🧠 Research-Level AI Architecture
+
+Heliox OS implements **10 research-level features** that push beyond typical AI agents:
+
+| # | Feature | Status | Module |
+|---|---------|--------|--------|
+| 1 | Persistent Long-Term Memory (Vector + Semantic) | ✅ | `memory/store.py` + ChromaDB |
+| 2 | Self-Reflection Loop | ✅ | `agents/reflector.py` |
+| 3 | Tool Discovery / Skill Registry | ✅ | `agents/reflector.py` (skill_registry table) |
+| 4 | Task Decomposition Engine | ✅ | `agents/decomposer.py` |
+| 5 | Autonomous Background Agents | ✅ | `agents/background.py` + `monitor_agent.py` |
+| 6 | Multi-Agent Collaboration | ✅ | `agents/orchestrator.py` (5 specialists) |
+| 7 | Real-Time Reasoning Visualization | ✅ | `reasoning/events.py` + `ReActPipeline.svelte` |
+| 8 | Simulation Sandbox | ✅ | `agents/sandbox.py` |
+| 9 | Self-Improving Prompt System | ✅ | `agents/prompt_improver.py` |
+| 10 | Plugin Ecosystem | ✅ | `plugins/__init__.py` |
+
+### 🔧 Task Decomposition Engine
+
+Complex goals are automatically broken into dependency-aware subtask trees:
+
+```
+User: "Build a Flask API for todo list"
+ → 1. [system] Create project folder
+ → 2. [system] Install Flask            (depends: 1)
+ → 3. [code]   Generate API code         (depends: 1)
+ → 4. [code]   Create requirements.txt   (depends: 2)
+ → 5. [code]   Run tests                 (depends: 3, 4)
+```
+
+### 🛡️ Simulation Sandbox
+
+Before executing dangerous commands, the sandbox produces an **impact report**:
+
+```
+⚠️ Simulation Report:
+  Risk: HIGH
+  Impact: 154 files affected (wildcard)
+  Warnings:
+    - ⚠️ Plan contains destructive actions
+    - 🔐 Plan requires elevated privileges
+    - ♻️ 2 action(s) are NOT reversible
+  Recommendation: ⚠️ HIGH RISK — Confirm impact
+```
+
+### 🧬 Self-Improving Prompt System
+
+Successful reasoning chains are stored and reused:
+- Keyword-indexed prompt templates with success/failure rates
+- Automatic strategy matching for similar future tasks
+- Rolling improvement — the agent gets better over time
+
+### 🔌 Plugin Ecosystem
+
+Extend Heliox OS capabilities via plugin manifests:
+
+```json
+{
+  "name": "docker-agent",
+  "version": "1.0.0",
+  "tools": [
+    {"name": "docker_build", "inputs": ["dockerfile_path", "tag"]},
+    {"name": "docker_run", "inputs": ["image", "ports"]}
+  ]
+}
+```
+
+Drop plugins into `~/.heliox/plugins/` — they're auto-discovered at startup.
 
 ## 🚀 Installation
 
