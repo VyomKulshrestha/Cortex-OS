@@ -262,7 +262,7 @@ class PromptImprover:
         parts: list[str] = []
 
         # Match by keyword overlap
-        for kw in keywords[:5]:
+        for kw in list(keywords)[:5]:
             cursor = await self._db.execute(
                 """SELECT example_input, strategy, success_count, failure_count
                    FROM prompt_templates
@@ -294,7 +294,7 @@ class PromptImprover:
         if parts:
             # De-duplicate
             unique_parts = list(dict.fromkeys(parts))
-            return "Past successful strategies:\n" + "\n".join(unique_parts[:max_results])
+            return "Past successful strategies:\n" + "\n".join(list(unique_parts)[:max_results])
 
         return ""
 
@@ -328,7 +328,7 @@ class PromptImprover:
         return {
             "total_templates": templates,
             "total_chains": total_chains,
-            "chain_success_rate": (round(success_chains / total_chains * 100, 1) if total_chains > 0 else 0),
+            "chain_success_rate": (float(int(success_chains / total_chains * 1000)) / 10 if total_chains > 0 else 0),
         }
 
     async def close(self) -> None:

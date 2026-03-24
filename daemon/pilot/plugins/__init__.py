@@ -117,7 +117,7 @@ class PluginRegistry:
 
     def discover(self) -> int:
         """Scan plugin directories and load manifests. Returns count of loaded plugins."""
-        loaded = 0
+        loaded: int = 0
 
         for plugin_dir in self._plugin_dirs:
             if not plugin_dir.exists():

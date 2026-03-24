@@ -60,6 +60,7 @@ class PendingConfirmation:
     plan_id: str
     event: asyncio.Event
     confirmed: bool = False
+    plan: Any = None
 
 
 class PilotServer:

@@ -44,7 +44,7 @@ class SubtaskStatus(StrEnum):
 class Subtask:
     """A single subtask in a decomposed goal."""
 
-    id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    id: str = field(default_factory=lambda: str(uuid.uuid4().hex)[:8])
     title: str = ""
     description: str = ""
     agent: str = "system"
@@ -78,7 +78,7 @@ class TaskDecomposition:
     subtasks: list[Subtask] = field(default_factory=list)
     is_complex: bool = False
     estimated_total_time: str = ""
-    decomposition_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    decomposition_id: str = field(default_factory=lambda: str(uuid.uuid4().hex)[:8])
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -180,7 +180,7 @@ class TaskDecomposer:
 
             if not ready:
                 # Break deadlock — force remaining into batch
-                ready = remaining[:]
+                ready = list(remaining)
 
             batches.append(ready)
             for st in ready:
