@@ -47,12 +47,23 @@
 
   let executionActions = $state<{ type: string; target: string; status: string }[]>([]);
   let pipelineStartTime = 0;
+  let showThoughts = $state(false);
+
+  // Reasoning event state
+  let stageThoughts = $state<Record<string, string>>({});
+  let stageDecisions = $state<Record<string, string>>({});
+  let stageTiming = $state<Record<string, number>>({});
+  let thoughtStream = $state<{ seq: number; stage: string; text: string; type: string }[]>([]);
 
   function resetPipeline() {
     stages = stages.map(s => ({ ...s, status: "idle" as StageStatus, detail: "", startTime: 0, endTime: 0 }));
     executionActions = [];
     totalDuration = 0;
     agentRouting = null;
+    stageThoughts = {};
+    stageDecisions = {};
+    stageTiming = {};
+    thoughtStream = [];
   }
 
   function setStage(id: string, status: StageStatus, detail: string = "") {
@@ -167,6 +178,78 @@
         setStage("confirmation", "active", "Waiting for user decision...");
         break;
       }
+
+      case "reasoning_event": {
+        const evt = p as {
+          event_type: string;
+          event_name: string;
+          stage: string;
+          duration_ms: number;
+          data: Record<string, any>;
+          sequence: number;
+        };
+
+        // Map backend stage names to our stage IDs
+        const stageMap: Record<string, string> = {
+          user_input: "user_input",
+          memory_recall: "memory_recall",
+          agent_routing: "agent_routing",
+          planning: "planning",
+          confirmation: "confirmation",
+          orchestration: "executing",
+          execution: "executing",
+          verification: "verifying",
+          reflection: "reflection",
+          memory_update: "memory_update",
+        };
+        const stageId = stageMap[evt.stage] || evt.stage;
+
+        // Handle different event types
+        if (evt.event_type === "thought") {
+          const text = evt.data?.text || "";
+          stageThoughts = { ...stageThoughts, [stageId]: text };
+          thoughtStream = [
+            ...thoughtStream.slice(-19),
+            { seq: evt.sequence, stage: evt.stage, text, type: "thought" },
+          ];
+        }
+
+        if (evt.event_type === "decision") {
+          const desc = evt.data?.description || "";
+          const chosen = evt.data?.chosen || "";
+          stageDecisions = { ...stageDecisions, [stageId]: `${desc}: ${chosen}` };
+          thoughtStream = [
+            ...thoughtStream.slice(-19),
+            { seq: evt.sequence, stage: evt.stage, text: `Decision: ${desc} → ${chosen}`, type: "decision" },
+          ];
+        }
+
+        if (evt.event_type === "phase_complete" && evt.duration_ms > 0) {
+          stageTiming = { ...stageTiming, [stageId]: Math.round(evt.duration_ms) };
+        }
+
+        if (evt.event_type === "progress") {
+          const pct = evt.data?.percent || 0;
+          const label = evt.data?.label || "";
+          setStage(stageId, "active", `${label} (${pct}%)`);
+        }
+
+        if (evt.event_type === "metric") {
+          thoughtStream = [
+            ...thoughtStream.slice(-19),
+            { seq: evt.sequence, stage: evt.stage, text: `📊 ${evt.data?.name}: ${evt.data?.value}${evt.data?.unit || ""}`, type: "metric" },
+          ];
+        }
+
+        if (evt.event_type === "phase_error") {
+          thoughtStream = [
+            ...thoughtStream.slice(-19),
+            { seq: evt.sequence, stage: evt.stage, text: `❌ ${evt.data?.error || "Error"}`, type: "error" },
+          ];
+        }
+
+        break;
+      }
     }
   });
 
@@ -232,6 +315,9 @@
         {#if agentRouting?.is_multi_agent}
           <span class="multi-agent-badge">Multi-Agent</span>
         {/if}
+        <button class="thought-toggle" class:active={showThoughts} onclick={() => showThoughts = !showThoughts} title="Toggle thought stream">
+          🧠
+        </button>
         <button class="dismiss-btn" onclick={dismiss} title="Dismiss">✕</button>
       </div>
     </div>
@@ -255,6 +341,24 @@
               <div class="stage-label">{stage.label}</div>
               {#if stage.detail}
                 <div class="stage-detail" transition:fade={{ duration: 150 }}>{stage.detail}</div>
+              {/if}
+              <!-- Thought bubble for this stage -->
+              {#if showThoughts && stageThoughts[stage.id]}
+                <div class="thought-bubble" transition:fade={{ duration: 200 }}>
+                  <span class="thought-icon">💭</span>
+                  <span class="thought-text">{stageThoughts[stage.id]}</span>
+                </div>
+              {/if}
+              <!-- Decision badge -->
+              {#if stageDecisions[stage.id]}
+                <div class="decision-badge" transition:fade={{ duration: 200 }}>
+                  <span class="decision-icon">⚖️</span>
+                  <span class="decision-text">{stageDecisions[stage.id]}</span>
+                </div>
+              {/if}
+              <!-- Stage timing -->
+              {#if stageTiming[stage.id]}
+                <div class="stage-timing">{stageTiming[stage.id]}ms</div>
               {/if}
             </div>
             <div class="stage-indicator">
@@ -289,6 +393,26 @@
         </div>
       {/each}
     </div>
+
+    <!-- Live Thought Stream -->
+    {#if showThoughts && thoughtStream.length > 0}
+      <div class="thought-stream" transition:slide={{ duration: 200 }}>
+        <div class="thought-stream-header">
+          <span class="thought-stream-icon">🧠</span>
+          <span class="thought-stream-title">Live Reasoning</span>
+          <span class="thought-count">{thoughtStream.length}</span>
+        </div>
+        <div class="thought-stream-list">
+          {#each thoughtStream as thought, k}
+            <div class="thought-entry {thought.type}" transition:fade={{ duration: 150 }}>
+              <span class="thought-seq">#{thought.seq}</span>
+              <span class="thought-stage-chip">{thought.stage}</span>
+              <span class="thought-content">{thought.text}</span>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
 
     <!-- Agent routing info -->
     {#if agentRouting}
@@ -642,5 +766,153 @@
 
   @keyframes spin {
     100% { transform: rotate(360deg); }
+  }
+
+  /* ── Thought Visualization Styles ── */
+
+  .thought-toggle {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.5);
+    border-radius: 50%;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 0.75rem;
+    transition: all 0.2s;
+  }
+
+  .thought-toggle:hover, .thought-toggle.active {
+    background: rgba(120, 100, 255, 0.15);
+    border-color: rgba(120, 100, 255, 0.4);
+  }
+
+  .thought-bubble {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.3rem;
+    margin-top: 4px;
+    padding: 0.25rem 0.5rem;
+    background: rgba(120, 100, 255, 0.06);
+    border-left: 2px solid rgba(120, 100, 255, 0.3);
+    border-radius: 0 4px 4px 0;
+    font-size: 0.65rem;
+    color: rgba(180, 160, 255, 0.8);
+    font-style: italic;
+  }
+
+  .thought-icon { font-size: 0.7rem; flex-shrink: 0; }
+  .thought-text { line-height: 1.3; }
+
+  .decision-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-top: 3px;
+    padding: 0.2rem 0.4rem;
+    background: rgba(255, 170, 0, 0.06);
+    border: 1px solid rgba(255, 170, 0, 0.15);
+    border-radius: 4px;
+    font-size: 0.6rem;
+    color: rgba(255, 200, 80, 0.9);
+  }
+
+  .decision-icon { font-size: 0.65rem; }
+
+  .stage-timing {
+    font-size: 0.6rem;
+    color: rgba(0, 255, 170, 0.5);
+    margin-top: 2px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Live Thought Stream */
+  .thought-stream {
+    margin-top: 0.75rem;
+    padding: 0.5rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(120, 100, 255, 0.15);
+    border-radius: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .thought-stream-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .thought-stream-title {
+    color: rgba(180, 160, 255, 0.9);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .thought-stream-icon { font-size: 0.85rem; }
+
+  .thought-count {
+    background: rgba(120, 100, 255, 0.15);
+    color: rgba(180, 160, 255, 0.9);
+    padding: 0.05rem 0.35rem;
+    border-radius: 8px;
+    font-size: 0.6rem;
+    font-weight: 600;
+  }
+
+  .thought-stream-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .thought-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    padding: 0.2rem 0.3rem;
+    font-size: 0.65rem;
+    border-radius: 3px;
+    color: rgba(255, 255, 255, 0.6);
+    line-height: 1.3;
+  }
+
+  .thought-entry.thought { color: rgba(180, 160, 255, 0.7); }
+  .thought-entry.decision { color: rgba(255, 200, 80, 0.8); }
+  .thought-entry.metric { color: rgba(0, 255, 170, 0.7); }
+  .thought-entry.error { color: rgba(255, 80, 80, 0.8); }
+
+  .thought-seq {
+    color: rgba(255, 255, 255, 0.25);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    min-width: 20px;
+    flex-shrink: 0;
+  }
+
+  .thought-stage-chip {
+    background: rgba(0, 240, 255, 0.08);
+    color: rgba(0, 240, 255, 0.6);
+    padding: 0 0.3rem;
+    border-radius: 3px;
+    font-size: 0.55rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .thought-content {
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
   }
 </style>

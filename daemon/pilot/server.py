@@ -78,6 +78,7 @@ class PilotServer:
         self._background: Any = None
         self._orchestrator: Any = None
         self._fusion: Any = None
+        self._reasoning: Any = None
         self._memory: Any = None
         self._vault: Any = None
         self._running = False
@@ -140,6 +141,12 @@ class PilotServer:
         self._fusion = MultimodalFusionEngine()
         self._fusion.set_broadcast(self._broadcast_notification)
 
+        # Reasoning Event Emitter — thought visualization telemetry
+        from pilot.reasoning.events import ReasoningEmitter
+
+        self._reasoning = ReasoningEmitter()
+        self._reasoning.set_broadcast(self._broadcast_notification)
+
         self._handlers = {
             "execute": self._handle_execute,
             "confirm": self._handle_confirm,
@@ -168,6 +175,9 @@ class PilotServer:
             "voice_event": self._handle_voice_event,
             "gesture_event": self._handle_gesture_event,
             "multimodal_stats": self._handle_multimodal_stats,
+            # Reasoning visualization endpoints
+            "reasoning_log": self._handle_reasoning_log,
+            "reasoning_stats": self._handle_reasoning_stats,
         }
 
     async def _broadcast_notification(self, method: str, params: Any) -> None:
@@ -225,29 +235,106 @@ class PilotServer:
 
         import time
 
-        _start_time = time.time()
+        from pilot.reasoning.events import (
+            CONFIRMATION_APPROVED,
+            CONFIRMATION_DENIED,
+            CONFIRMATION_REQUIRED,
+            EXECUTOR_ACTION_COMPLETE,
+            EXECUTOR_ACTION_STARTED,
+            EXECUTOR_ALL_COMPLETE,
+            EXECUTOR_ERROR,
+            EXECUTOR_STARTED,
+            MEMORY_CONTEXT_LOADED,
+            MEMORY_SEARCH_STARTED,
+            MEMORY_STORE_COMPLETE,
+            MEMORY_STORE_STARTED,
+            ORCHESTRATOR_AGENT_DELEGATED,
+            ORCHESTRATOR_ROUTING,
+            PLANNER_ERROR,
+            PLANNER_GENERATED_PLAN,
+            PLANNER_LLM_CALL,
+            PLANNER_REPLANNING,
+            PLANNER_STARTED,
+            REFLECTION_COMPLETE,
+            REFLECTION_STARTED,
+            ROUTING_AGENTS_ASSIGNED,
+            ROUTING_ANALYSIS_STARTED,
+            VERIFICATION_FAILED,
+            VERIFICATION_PASSED,
+            VERIFICATION_STARTED,
+        )
 
-        # Multi-agent routing analysis (legacy + orchestrator)
+        _start_time = time.time()
+        emit = self._reasoning
+        if emit:
+            emit.reset()
+
+        # ── Stage: User Input ──
+        input_phase = ""
+        if emit:
+            input_phase = await emit.phase_start("user_input", "user_input_received", {"input": user_input})
+            await emit.phase_complete(
+                "user_input", "user_input_received", {"length": len(user_input)}, parent_id=input_phase
+            )
+
+        # ── Stage: Memory Recall ──
+        mem_phase = ""
+        if emit:
+            mem_phase = await emit.phase_start("memory_recall", MEMORY_SEARCH_STARTED)
+
+        improvement_ctx = await self._reflector.get_improvement_context(user_input)
+
+        if emit:
+            await emit.thought(
+                "memory_recall", "Searching long-term memory for relevant context...", parent_id=mem_phase
+            )
+            await emit.phase_complete(
+                "memory_recall", MEMORY_CONTEXT_LOADED, {"has_context": bool(improvement_ctx)}, parent_id=mem_phase
+            )
+
+        # ── Stage: Agent Routing ──
+        route_phase = ""
+        if emit:
+            route_phase = await emit.phase_start("agent_routing", ROUTING_ANALYSIS_STARTED, {"input": user_input})
+
         routing = self._multi_agent.get_routing_summary(user_input)
         await ws.send(_notification("agent_routing", routing))
 
-        # Get improvement context from reflector
-        improvement_ctx = await self._reflector.get_improvement_context(user_input)
+        if emit:
+            await emit.decision(
+                "agent_routing",
+                "Route to specialist agents",
+                options=[r.value for r in self._orchestrator._agents] if self._orchestrator else [],
+                chosen=", ".join(routing.get("assigned_agents", [])),
+                parent_id=route_phase,
+            )
+            await emit.phase_complete("agent_routing", ROUTING_AGENTS_ASSIGNED, routing, parent_id=route_phase)
 
-        error_context = improvement_ctx  # Seed with past lessons
+        error_context = improvement_ctx
         all_results: list = []
         last_verification = None
         last_explanation = ""
 
         for attempt in range(1 + self.MAX_RETRIES):
-            # Phase 1: Planning (or re-planning with error context)
+            # ── Stage: Planning ──
+            plan_phase = ""
+            if emit:
+                event_name = PLANNER_STARTED if attempt == 0 else PLANNER_REPLANNING
+                plan_phase = await emit.phase_start("planning", event_name, {"attempt": attempt + 1})
+                await emit.thought("planning", "Generating structured action plan via LLM...", parent_id=plan_phase)
+
             if attempt == 0:
                 await ws.send(_notification("status", {"phase": "planning"}))
             else:
                 await ws.send(_notification("status", {"phase": f"re-planning (attempt {attempt + 1})"}))
 
+            if emit:
+                await emit.data_event("planning", PLANNER_LLM_CALL, {"model": "active"}, parent_id=plan_phase)
+
             plan = await self._planner.plan(user_input, error_context=error_context)
             if plan.error:
+                if emit:
+                    await emit.phase_error("planning", PLANNER_ERROR, plan.error, parent_id=plan_phase)
                 if attempt < self.MAX_RETRIES:
                     error_context = plan.error
                     continue
@@ -255,6 +342,19 @@ class PilotServer:
 
             last_explanation = plan.explanation
             plan_id = str(uuid.uuid4())[:8]
+
+            if emit:
+                await emit.phase_complete(
+                    "planning",
+                    PLANNER_GENERATED_PLAN,
+                    {
+                        "plan_id": plan_id,
+                        "action_count": len(plan.actions),
+                        "explanation": plan.explanation[:120],
+                        "action_types": [a.action_type.value for a in plan.actions],
+                    },
+                    parent_id=plan_phase,
+                )
 
             await ws.send(
                 _notification(
@@ -267,31 +367,88 @@ class PilotServer:
                 )
             )
 
-            # Phase 2: Confirmation gate
+            # ── Stage: Confirmation Gate ──
             needs_confirm = any(a.requires_confirmation for a in plan.actions)
             if needs_confirm:
+                confirm_phase = ""
+                if emit:
+                    confirm_phase = await emit.phase_start("confirmation", CONFIRMATION_REQUIRED, {"plan_id": plan_id})
+                    await emit.thought(
+                        "confirmation", "Dangerous action detected — awaiting user approval...", parent_id=confirm_phase
+                    )
+
                 confirmed = await self._wait_for_confirmation(plan_id, plan, ws)
+
+                if emit:
+                    if confirmed:
+                        await emit.phase_complete(
+                            "confirmation", CONFIRMATION_APPROVED, {"plan_id": plan_id}, parent_id=confirm_phase
+                        )
+                    else:
+                        await emit.phase_error(
+                            "confirmation", CONFIRMATION_DENIED, "User denied the plan", parent_id=confirm_phase
+                        )
+
                 if not confirmed:
                     return {
                         "status": "cancelled",
                         "message": "Plan was denied by user.",
                         "explanation": plan.explanation,
                     }
+            else:
+                if emit:
+                    skip_phase = await emit.phase_start("confirmation", "confirmation_skipped")
+                    await emit.phase_complete(
+                        "confirmation", "confirmation_skipped", {"reason": "No dangerous actions"}, parent_id=skip_phase
+                    )
 
-            # Phase 3: Execution
+            # ── Stage: Execution ──
+            exec_phase = ""
+            if emit:
+                exec_phase = await emit.phase_start("execution", EXECUTOR_STARTED, {"action_count": len(plan.actions)})
+
             await ws.send(_notification("status", {"phase": "executing"}))
+            action_idx = 0
+            _total_actions = len(plan.actions)
 
-            async def _on_action_start(action: Any) -> None:
+            async def _on_action_start(
+                action: Any, _exec_phase: str = exec_phase, _total: int = _total_actions
+            ) -> None:
+                nonlocal action_idx
                 await ws.send(_notification("action_start", {"action": action.model_dump()}))
+                if emit:
+                    action_idx += 1
+                    await emit.data_event(
+                        "execution",
+                        EXECUTOR_ACTION_STARTED,
+                        {"action_type": action.action_type.value, "target": action.target, "index": action_idx},
+                        parent_id=_exec_phase,
+                    )
+                    await emit.progress(
+                        "execution", action_idx, _total, label=action.action_type.value, parent_id=_exec_phase
+                    )
 
-            async def _on_action_complete(result: Any) -> None:
+            async def _on_action_complete(result: Any, _exec_phase: str = exec_phase) -> None:
                 await ws.send(_notification("action_complete", {"result": result.model_dump()}))
+                if emit:
+                    event_name = EXECUTOR_ACTION_COMPLETE if result.success else EXECUTOR_ERROR
+                    await emit.data_event(
+                        "execution",
+                        event_name,
+                        {"success": result.success, "error": result.error or ""},
+                        parent_id=_exec_phase,
+                    )
 
             # Route through multi-agent orchestrator
             if self._orchestrator:
-                # Send orchestrator routing info
                 orch_routing = self._orchestrator.get_routing_summary(plan)
                 await ws.send(_notification("orchestrator_routing", orch_routing))
+                if emit:
+                    await emit.data_event("orchestration", ORCHESTRATOR_ROUTING, orch_routing, parent_id=exec_phase)
+                    for agent_info in orch_routing.get("assigned_agents", []):
+                        role_name = agent_info["role"] if isinstance(agent_info, dict) else str(agent_info)
+                        await emit.thought("orchestration", f"Delegating to {role_name} agent...", parent_id=exec_phase)
+
                 results = await self._orchestrator.execute_plan(
                     user_input,
                     plan,
@@ -306,14 +463,56 @@ class PilotServer:
                 )
             all_results = results
 
-            # Phase 4: Verification
+            if emit:
+                successes = sum(1 for r in results if r.success)
+                await emit.phase_complete(
+                    "execution",
+                    EXECUTOR_ALL_COMPLETE,
+                    {"total": len(results), "successes": successes, "failures": len(results) - successes},
+                    parent_id=exec_phase,
+                )
+
+            # ── Stage: Verification ──
+            verify_phase = ""
+            if emit:
+                verify_phase = await emit.phase_start("verification", VERIFICATION_STARTED)
+                await emit.thought(
+                    "verification", "Checking execution results against expected outcomes...", parent_id=verify_phase
+                )
+
             await ws.send(_notification("status", {"phase": "verifying"}))
             verification = await self._verifier.verify(plan, results)
             last_verification = verification
 
             if verification.passed:
+                if emit:
+                    await emit.phase_complete(
+                        "verification",
+                        VERIFICATION_PASSED,
+                        {"details": verification.details[:3]},
+                        parent_id=verify_phase,
+                    )
+
+                # ── Stage: Reflection ──
+                if emit:
+                    refl_phase = await emit.phase_start("reflection", REFLECTION_STARTED)
+                    await emit.thought(
+                        "reflection", "Analyzing performance and extracting lessons...", parent_id=refl_phase
+                    )
+                    duration_ms = int((time.time() - _start_time) * 1000)
+                    await emit.metric("reflection", "total_duration_ms", duration_ms, unit="ms", parent_id=refl_phase)
+                    await emit.phase_complete(
+                        "reflection", REFLECTION_COMPLETE, {"retry_count": attempt}, parent_id=refl_phase
+                    )
+
+                # ── Stage: Memory Update ──
+                if emit:
+                    mem_store_phase = await emit.phase_start("memory_update", MEMORY_STORE_STARTED)
+                    await emit.thought(
+                        "memory_update", "Persisting interaction to long-term memory...", parent_id=mem_store_phase
+                    )
+
                 asyncio.create_task(self._memory.record(user_input, plan, results))
-                # Reflection step — self-improvement after success
                 asyncio.create_task(
                     self._reflector.reflect(
                         user_input,
@@ -324,6 +523,12 @@ class PilotServer:
                         duration_ms=int((time.time() - _start_time) * 1000),
                     )
                 )
+
+                if emit:
+                    await emit.phase_complete(
+                        "memory_update", MEMORY_STORE_COMPLETE, {"saved": True}, parent_id=mem_store_phase
+                    )
+
                 return {
                     "status": "success",
                     "results": [r.model_dump() for r in results],
@@ -333,6 +538,11 @@ class PilotServer:
                 }
 
             # Execution failed — build error context for retry
+            if emit:
+                await emit.phase_error(
+                    "verification", VERIFICATION_FAILED, "; ".join(verification.details[:3]), parent_id=verify_phase
+                )
+
             failed_details = [d for d in verification.details if "FAILED" in d or "MISMATCH" in d]
             error_msgs = [r.error for r in results if r.error]
             error_context = "\n".join(failed_details + error_msgs)
@@ -346,8 +556,17 @@ class PilotServer:
                         },
                     )
                 )
+                if emit:
+                    await emit.thought(
+                        "planning", f"Retry {attempt + 1}: Re-planning with error context...", parent_id=""
+                    )
             else:
                 break
+
+        # ── Final memory save on partial failure ──
+        if emit:
+            mem_final = await emit.phase_start("memory_update", MEMORY_STORE_STARTED)
+            await emit.phase_complete("memory_update", MEMORY_STORE_COMPLETE, {"partial": True}, parent_id=mem_final)
 
         asyncio.create_task(self._memory.record(user_input, plan, all_results))
         return {
@@ -614,6 +833,20 @@ class PilotServer:
         if self._fusion:
             return self._fusion.get_stats()
         return {"error": "Fusion engine not initialized"}
+
+    # -- Reasoning Visualization --
+
+    async def _handle_reasoning_log(self, params: dict, ws: ServerConnection) -> dict:
+        """Return the full reasoning event log for the current session."""
+        if self._reasoning:
+            return {"events": self._reasoning.get_session_log()}
+        return {"error": "Reasoning emitter not initialized"}
+
+    async def _handle_reasoning_stats(self, params: dict, ws: ServerConnection) -> dict:
+        """Return reasoning emitter statistics."""
+        if self._reasoning:
+            return self._reasoning.get_stats()
+        return {"error": "Reasoning emitter not initialized"}
 
     # -- Broadcast --
 
