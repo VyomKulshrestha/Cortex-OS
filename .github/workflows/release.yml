@@ -99,12 +99,7 @@ jobs:
             6. Enter your API key (Gemini/OpenAI/Claude) in Settings
 
             ### What's New
-            - 🌀 Arc Reactor animated logo
-            - 🧠 Neural network background
-            - 🤚 12 hand gestures via webcam
-            - 🎤 Voice control with "Hey Heliox" wake word
-            - ✨ Particle burst effects
-            - 🔊 Audio spectrum visualizer
+            *Please check our [Releases page](https://github.com/VyomKulshrestha/Heliox-OS/releases) or CHANGELOG for detailed information on this version's features.*
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
