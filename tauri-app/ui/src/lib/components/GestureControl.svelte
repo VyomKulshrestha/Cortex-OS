@@ -97,7 +97,7 @@
   let mpLoading = $state(false);
 
   async function loadMediaPipe() {
-    if (mpLoaded) return true;
+    if (mpLoaded && hands) return true;
     mpLoading = true;
 
     try {
@@ -170,8 +170,34 @@
     detectFrame();
   }
 
+  let stopping = false;
+
   function stopGestures() {
+    if (stopping) return; // Guard against double-fire
+    stopping = true;
+
+    // 1. Stop the animation frame loop FIRST (prevents new MediaPipe sends)
     isActive = false;
+    if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = 0; }
+
+    // 2. Close MediaPipe Hands to release the video element reference
+    if (hands) {
+      try { hands.close(); } catch { /* ignore */ }
+      hands = null;
+    }
+
+    // 3. Stop camera tracks AFTER MediaPipe is closed
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+
+    // 4. Clear video element source
+    if (videoEl) {
+      videoEl.srcObject = null;
+    }
+
+    // 5. Reset UI state
     showCamera = false;
     currentGesture = "";
     confidence = 0;
@@ -182,14 +208,15 @@
     wristHistory = [];
     indexHistory = [];
 
-    if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = 0; }
-    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    stopping = false;
   }
 
   async function detectFrame() {
-    if (!isActive || !videoEl || !hands) return;
+    if (!isActive || !videoEl || !hands || stopping) return;
     try { await hands.send({ image: videoEl }); } catch { /* ignore */ }
-    animFrameId = requestAnimationFrame(detectFrame);
+    if (isActive && !stopping) {
+      animFrameId = requestAnimationFrame(detectFrame);
+    }
   }
 
   function onHandResults(results: any) {

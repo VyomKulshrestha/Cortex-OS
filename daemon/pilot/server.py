@@ -177,18 +177,29 @@ class PilotServer:
         plugin_count = self._plugin_registry.discover()
         logger.info("Plugins loaded: %d", plugin_count)
 
-        # Subconscious Agent — long-term memory consolidation
-        from pilot.agents.subconscious import SubconsciousAgent
+        # Subconscious Agent — long-term memory consolidation (lazy start)
+        try:
+            from pilot.agents.subconscious import SubconsciousAgent
 
-        self._subconscious = SubconsciousAgent(model_router)
-        await self._subconscious.initialize(str(DB_FILE))
-        await self._subconscious.start(interval_minutes=30)
+            self._subconscious = SubconsciousAgent(model_router)
+            await self._subconscious.initialize(str(DB_FILE))
+            # NOTE: Don't auto-start the consolidation loop — it can block
+            # the event loop with LLM calls. Users start it via API.
+            logger.info("SubconsciousAgent initialized (idle, use persona_consolidate to trigger)")
+        except Exception:
+            logger.warning("SubconsciousAgent init failed (non-critical)", exc_info=True)
 
-        # Screen Vision Agent — continuous screen awareness
-        from pilot.agents.screen_vision import ScreenVisionAgent
+        # Screen Vision Agent — continuous screen awareness (lazy start)
+        try:
+            from pilot.agents.screen_vision import ScreenVisionAgent
 
-        self._screen_vision = ScreenVisionAgent(model_router)
-        await self._screen_vision.start(interval_seconds=2.0)
+            self._screen_vision = ScreenVisionAgent(model_router)
+            # NOTE: Don't auto-start the capture loop — it uses blocking
+            # subprocess calls that starve the asyncio event loop.
+            # Users enable it via the screen_vision_toggle endpoint.
+            logger.info("ScreenVisionAgent initialized (idle, use screen_vision_toggle to start)")
+        except Exception:
+            logger.warning("ScreenVisionAgent init failed (non-critical)", exc_info=True)
 
         self._handlers = {
             "execute": self._handle_execute,

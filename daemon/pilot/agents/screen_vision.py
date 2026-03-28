@@ -166,7 +166,8 @@ class ScreenVisionAgent:
     async def _capture_state(self) -> ScreenState:
         """Capture current screen state."""
         now = datetime.now(UTC).isoformat()
-        app, title = _get_active_window()
+        # Run blocking OS calls in a thread to avoid starving the event loop
+        app, title = await asyncio.to_thread(_get_active_window)
         screen_hash = await self._capture_screenshot_hash()
 
         changed = screen_hash != self._last_hash and screen_hash != ""
@@ -189,26 +190,28 @@ class ScreenVisionAgent:
     async def _capture_screenshot_hash(self) -> str:
         """Take a screenshot and return its hash for change detection."""
         try:
-            import mss
-
-            with mss.mss() as sct:
-                monitor = sct.monitors[1]  # Primary monitor
-                img = sct.grab(monitor)
-                # Fast hash of pixel data for diff detection
-                raw = img.rgb
-                sampled = bytes(raw[i] for i in range(0, len(raw), 1000))
-                return hashlib.md5(sampled).hexdigest()
+            return await asyncio.to_thread(self._sync_screenshot_hash)
         except ImportError:
             # Fallback: use OS screencapture and hash the file
-            return await self._fallback_screenshot_hash()
+            return await asyncio.to_thread(self._sync_fallback_screenshot_hash)
 
-    async def _fallback_screenshot_hash(self) -> str:
-        """Fallback screenshot hash using OS tools."""
+    def _sync_screenshot_hash(self) -> str:
+        """Synchronous screenshot hash — runs in a thread."""
+        import mss
+
+        with mss.mss() as sct:
+            monitor = sct.monitors[1]  # Primary monitor
+            img = sct.grab(monitor)
+            raw = img.rgb
+            sampled = bytes(raw[i] for i in range(0, len(raw), 1000))
+            return hashlib.md5(sampled).hexdigest()
+
+    def _sync_fallback_screenshot_hash(self) -> str:
+        """Synchronous fallback screenshot hash — runs in a thread."""
         os_name = platform.system()
         tmp_path = self._screenshot_dir / "_latest.png"
         try:
             if os_name == "Windows":
-                # PowerShell screenshot
                 ps_cmd = f"""
                 Add-Type -AssemblyName System.Windows.Forms
                 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
