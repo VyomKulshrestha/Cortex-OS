@@ -346,6 +346,7 @@ class PilotServer:
 
         # ── Stage: User Input ──
         input_phase = ""
+        await ws.send(_notification("status", {"phase": "receiving input"}))
         if emit:
             input_phase = await emit.phase_start("user_input", "user_input_received", {"input": user_input})
             await emit.phase_complete(
@@ -354,6 +355,7 @@ class PilotServer:
 
         # ── Stage: Memory Recall ──
         mem_phase = ""
+        await ws.send(_notification("status", {"phase": "recalling memory"}))
         if emit:
             mem_phase = await emit.phase_start("memory_recall", MEMORY_SEARCH_STARTED)
 
@@ -369,6 +371,7 @@ class PilotServer:
 
         # ── Stage: Agent Routing ──
         route_phase = ""
+        await ws.send(_notification("status", {"phase": "routing agents"}))
         if emit:
             route_phase = await emit.phase_start("agent_routing", ROUTING_ANALYSIS_STARTED, {"input": user_input})
 

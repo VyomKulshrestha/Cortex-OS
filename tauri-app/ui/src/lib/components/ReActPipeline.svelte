@@ -92,12 +92,27 @@
         const phase = String(p.phase || "");
         isVisible = true;
 
+        if (phase === "receiving input") {
+          if (pipelineStartTime === 0) pipelineStartTime = Date.now();
+          setStage("user_input", "active", "Processing...");
+        }
+
+        if (phase === "recalling memory") {
+          setStage("user_input", "success", "Received");
+          setStage("memory_recall", "active", "Searching context...");
+        }
+
+        if (phase === "routing agents") {
+          setStage("memory_recall", "success", "Context loaded");
+          setStage("agent_routing", "active", "Analyzing...");
+        }
+
         if (phase === "planning" || phase.startsWith("re-planning")) {
           if (pipelineStartTime === 0) pipelineStartTime = Date.now();
           setStage("user_input", "success", "Received");
           setStage("memory_recall", "success", "Context loaded");
           setStage("agent_routing", "success",
-            agentRouting ? agentRouting.assigned_agents.join(", ") : "Analyzing...");
+            agentRouting ? agentRouting.assigned_agents.join(", ") : "Routed");
           setStage("planning", "active", phase.includes("re-planning") ? "Re-planning..." : "Generating plan...");
           // Reset downstream
           setStage("confirmation", "idle");
@@ -205,6 +220,30 @@
         const stageId = stageMap[evt.stage] || evt.stage;
 
         // Handle different event types
+
+        // ── Phase lifecycle: update stage status indicators ──
+        if (evt.event_type === "phase_start") {
+          setStage(stageId, "active", evt.event_name.replace(/_/g, " ") || "Working...");
+        }
+
+        if (evt.event_type === "phase_complete") {
+          const detail = evt.data?.reason || evt.event_name.replace(/_/g, " ") || "Done";
+          setStage(stageId, "success", detail);
+          if (evt.duration_ms > 0) {
+            stageTiming = { ...stageTiming, [stageId]: Math.round(evt.duration_ms) };
+          }
+        }
+
+        if (evt.event_type === "phase_error") {
+          const errText = evt.data?.error || "Error";
+          setStage(stageId, "error", errText);
+          thoughtStream = [
+            ...thoughtStream.slice(-19),
+            { seq: evt.sequence, stage: evt.stage, text: `❌ ${errText}`, type: "error" },
+          ];
+        }
+
+        // ── Thoughts, decisions, progress, metrics ──
         if (evt.event_type === "thought") {
           const text = evt.data?.text || "";
           stageThoughts = { ...stageThoughts, [stageId]: text };
@@ -224,10 +263,6 @@
           ];
         }
 
-        if (evt.event_type === "phase_complete" && evt.duration_ms > 0) {
-          stageTiming = { ...stageTiming, [stageId]: Math.round(evt.duration_ms) };
-        }
-
         if (evt.event_type === "progress") {
           const pct = evt.data?.percent || 0;
           const label = evt.data?.label || "";
@@ -238,13 +273,6 @@
           thoughtStream = [
             ...thoughtStream.slice(-19),
             { seq: evt.sequence, stage: evt.stage, text: `📊 ${evt.data?.name}: ${evt.data?.value}${evt.data?.unit || ""}`, type: "metric" },
-          ];
-        }
-
-        if (evt.event_type === "phase_error") {
-          thoughtStream = [
-            ...thoughtStream.slice(-19),
-            { seq: evt.sequence, stage: evt.stage, text: `❌ ${evt.data?.error || "Error"}`, type: "error" },
           ];
         }
 
