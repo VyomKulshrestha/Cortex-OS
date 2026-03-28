@@ -1,0 +1,75 @@
+{
+  "name": "media-control",
+  "version": "1.0.0",
+  "description": "Media playback control — Spotify, system volume, YouTube, and media keys",
+  "author": "heliox-core",
+  "tools": [
+    {
+      "name": "spotify_play",
+      "description": "Play a song, artist, or playlist on Spotify",
+      "inputs": ["query"],
+      "outputs": ["track_name", "artist"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    },
+    {
+      "name": "spotify_pause",
+      "description": "Pause the currently playing Spotify track",
+      "inputs": [],
+      "outputs": ["status"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    },
+    {
+      "name": "spotify_next",
+      "description": "Skip to the next track on Spotify",
+      "inputs": [],
+      "outputs": ["track_name"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    },
+    {
+      "name": "spotify_now_playing",
+      "description": "Get information about the currently playing Spotify track",
+      "inputs": [],
+      "outputs": ["track_name", "artist", "album", "progress_ms"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    },
+    {
+      "name": "volume_set",
+      "description": "Set the system volume to a specific percentage (0-100)",
+      "inputs": ["level"],
+      "outputs": ["current_volume"],
+      "permission_tier": 1,
+      "action_type": "shell_command"
+    },
+    {
+      "name": "volume_mute",
+      "description": "Toggle system mute on/off",
+      "inputs": [],
+      "outputs": ["muted"],
+      "permission_tier": 1,
+      "action_type": "shell_command"
+    },
+    {
+      "name": "youtube_open",
+      "description": "Open a YouTube video or search query in the default browser",
+      "inputs": ["query"],
+      "outputs": ["url"],
+      "permission_tier": 1,
+      "action_type": "shell_command"
+    },
+    {
+      "name": "media_key",
+      "description": "Simulate a media key press (play_pause, next_track, prev_track, volume_up, volume_down)",
+      "inputs": ["key"],
+      "outputs": ["status"],
+      "permission_tier": 1,
+      "action_type": "shell_command"
+    }
+  ],
+  "agent_type": "system",
+  "entry_point": "media_plugin.py",
+  "dependencies": []
+}

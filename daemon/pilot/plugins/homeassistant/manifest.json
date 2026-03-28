@@ -1,0 +1,75 @@
+{
+  "name": "home-assistant",
+  "version": "1.0.0",
+  "description": "Home Assistant IoT control — smart lights, switches, climate, and device state",
+  "author": "heliox-core",
+  "tools": [
+    {
+      "name": "ha_light_toggle",
+      "description": "Toggle a smart light on or off by entity ID",
+      "inputs": ["entity_id"],
+      "outputs": ["state"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    },
+    {
+      "name": "ha_light_brightness",
+      "description": "Set brightness of a smart light (0-255)",
+      "inputs": ["entity_id", "brightness"],
+      "outputs": ["state", "brightness"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    },
+    {
+      "name": "ha_light_color",
+      "description": "Set the color of a smart light using RGB values",
+      "inputs": ["entity_id", "r", "g", "b"],
+      "outputs": ["state", "color"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    },
+    {
+      "name": "ha_switch_toggle",
+      "description": "Toggle a smart switch/plug on or off",
+      "inputs": ["entity_id"],
+      "outputs": ["state"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    },
+    {
+      "name": "ha_climate_set",
+      "description": "Set target temperature on a thermostat or climate device",
+      "inputs": ["entity_id", "temperature", "hvac_mode"],
+      "outputs": ["state", "temperature"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    },
+    {
+      "name": "ha_get_state",
+      "description": "Get the current state of any Home Assistant entity",
+      "inputs": ["entity_id"],
+      "outputs": ["state", "attributes"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    },
+    {
+      "name": "ha_scene_activate",
+      "description": "Activate a pre-defined Home Assistant scene (e.g., 'Movie Night', 'Good Morning')",
+      "inputs": ["scene_id"],
+      "outputs": ["status"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    },
+    {
+      "name": "ha_list_devices",
+      "description": "List all available devices and entities in the Home Assistant instance",
+      "inputs": ["domain_filter"],
+      "outputs": ["devices"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    }
+  ],
+  "agent_type": "system",
+  "entry_point": "homeassistant_plugin.py",
+  "dependencies": []
+}

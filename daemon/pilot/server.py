@@ -84,6 +84,8 @@ class PilotServer:
         self._sandbox: Any = None
         self._prompt_improver: Any = None
         self._plugin_registry: Any = None
+        self._subconscious: Any = None
+        self._screen_vision: Any = None
         self._memory: Any = None
         self._vault: Any = None
         self._running = False
@@ -175,6 +177,19 @@ class PilotServer:
         plugin_count = self._plugin_registry.discover()
         logger.info("Plugins loaded: %d", plugin_count)
 
+        # Subconscious Agent — long-term memory consolidation
+        from pilot.agents.subconscious import SubconsciousAgent
+
+        self._subconscious = SubconsciousAgent(model_router)
+        await self._subconscious.initialize(str(DB_FILE))
+        await self._subconscious.start(interval_minutes=30)
+
+        # Screen Vision Agent — continuous screen awareness
+        from pilot.agents.screen_vision import ScreenVisionAgent
+
+        self._screen_vision = ScreenVisionAgent(model_router)
+        await self._screen_vision.start(interval_seconds=2.0)
+
         self._handlers = {
             "execute": self._handle_execute,
             "confirm": self._handle_confirm,
@@ -217,6 +232,16 @@ class PilotServer:
             "plugin_list": self._handle_plugin_list,
             "plugin_tools": self._handle_plugin_tools,
             "plugin_toggle": self._handle_plugin_toggle,
+            # Subconscious agent endpoints
+            "persona_rules": self._handle_persona_rules,
+            "persona_consolidate": self._handle_persona_consolidate,
+            "persona_add_preference": self._handle_persona_add_preference,
+            "subconscious_stats": self._handle_subconscious_stats,
+            # Screen vision endpoints
+            "screen_context": self._handle_screen_context,
+            "screen_current_app": self._handle_screen_current_app,
+            "screen_vision_stats": self._handle_screen_vision_stats,
+            "screen_vision_toggle": self._handle_screen_vision_toggle,
         }
 
     async def _broadcast_notification(self, method: str, params: Any) -> None:
@@ -960,6 +985,76 @@ class PilotServer:
                 ok = self._plugin_registry.disable_plugin(name)
             return {"success": ok, "plugin": name, "enabled": enabled}
         return {"error": "Plugin registry not initialized"}
+
+    # ── Subconscious Agent Handlers ──
+
+    async def _handle_persona_rules(self, params: dict, ws: ServerConnection) -> dict:
+        """Return all persona rules."""
+        if self._subconscious:
+            context = await self._subconscious.get_persona_context()
+            stats = await self._subconscious.get_stats()
+            return {"context": context, **stats}
+        return {"error": "Subconscious agent not initialized"}
+
+    async def _handle_persona_consolidate(self, params: dict, ws: ServerConnection) -> dict:
+        """Force a consolidation cycle."""
+        if self._subconscious:
+            result = await self._subconscious.consolidate()
+            return result
+        return {"error": "Subconscious agent not initialized"}
+
+    async def _handle_persona_add_preference(self, params: dict, ws: ServerConnection) -> dict:
+        """Manually add a user preference."""
+        key = params.get("key", "")
+        value = params.get("value", "")
+        if not key or not value:
+            return {"error": "Both key and value required"}
+        if self._subconscious:
+            await self._subconscious.add_manual_preference(key, value)
+            return {"status": "ok", "key": key, "value": value}
+        return {"error": "Subconscious agent not initialized"}
+
+    async def _handle_subconscious_stats(self, params: dict, ws: ServerConnection) -> dict:
+        """Return subconscious agent stats."""
+        if self._subconscious:
+            return await self._subconscious.get_stats()
+        return {"error": "Subconscious agent not initialized"}
+
+    # ── Screen Vision Handlers ──
+
+    async def _handle_screen_context(self, params: dict, ws: ServerConnection) -> dict:
+        """Return the current screen context summary."""
+        if self._screen_vision:
+            return {
+                "summary": self._screen_vision.get_context_for_planner(),
+                **self._screen_vision.get_context().to_dict(),
+            }
+        return {"error": "Screen vision not initialized"}
+
+    async def _handle_screen_current_app(self, params: dict, ws: ServerConnection) -> dict:
+        """Return the currently active application."""
+        if self._screen_vision:
+            return {"active_app": self._screen_vision.get_current_app()}
+        return {"error": "Screen vision not initialized"}
+
+    async def _handle_screen_vision_stats(self, params: dict, ws: ServerConnection) -> dict:
+        """Return screen vision statistics."""
+        if self._screen_vision:
+            return self._screen_vision.get_stats()
+        return {"error": "Screen vision not initialized"}
+
+    async def _handle_screen_vision_toggle(self, params: dict, ws: ServerConnection) -> dict:
+        """Start or stop screen vision."""
+        enabled = params.get("enabled", True)
+        if self._screen_vision:
+            if enabled:
+                interval = params.get("interval_seconds", 2.0)
+                describe = params.get("enable_describe", False)
+                await self._screen_vision.start(interval, describe)
+            else:
+                await self._screen_vision.stop()
+            return {"status": "ok", "enabled": enabled}
+        return {"error": "Screen vision not initialized"}
 
     # -- Broadcast --
 

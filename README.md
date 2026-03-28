@@ -220,10 +220,10 @@ graph TD
 
     subgraph "Plugin Ecosystem"
         PluginReg["Plugin Registry"]
-        PluginReg --> |"tools"| Orchestrator
-        P1["heliox-plugin-docker"]
-        P2["heliox-plugin-spotify"]
-        P3["heliox-plugin-k8s"]
+        PluginReg -->|"tools"| Orchestrator
+        P1["developer-tools"]
+        P2["media-control"]
+        P3["home-assistant"]
         P1 --- PluginReg
         P2 --- PluginReg
         P3 --- PluginReg
@@ -242,6 +242,21 @@ graph TD
     Reflector --> Memory
     Reflector --> SkillReg["Skill Registry"]
 
+    subgraph "Subconscious Layer"
+        SubAgent["Subconscious Agent"]
+        SubAgent -->|"persona rules"| Planner
+        Reflector --> SubAgent
+        SubAgent --> PersonaFile["~/.heliox/persona.md"]
+    end
+
+    subgraph "Screen Awareness"
+        ScreenVision["Screen Vision Agent"]
+        ScreenVision -->|"context"| Planner
+        ScreenVision --> AppDetect["Active App Detector"]
+        ScreenVision --> DiffEngine["Screenshot Diff"]
+    end
+
+
     subgraph "Reasoning Telemetry"
         Daemon -.-> |"events"| ReasoningEmitter["Reasoning Emitter"]
         ReasoningEmitter -.-> |"WebSocket"| TVS
@@ -250,7 +265,7 @@ graph TD
 
 ## 🧠 Research-Level AI Architecture
 
-Heliox OS implements **10 research-level features** that push beyond typical AI agents:
+Heliox OS implements **13 research-level features** that push beyond typical AI agents:
 
 | # | Feature | Status | Module |
 |---|---------|--------|--------|
@@ -264,6 +279,9 @@ Heliox OS implements **10 research-level features** that push beyond typical AI 
 | 8 | Simulation Sandbox | ✅ | `agents/sandbox.py` |
 | 9 | Self-Improving Prompt System | ✅ | `agents/prompt_improver.py` |
 | 10 | Plugin Ecosystem | ✅ | `plugins/__init__.py` |
+| 11 | Flagship Plugins (Developer, Media, IoT) | ✅ | `plugins/developer/`, `plugins/media/`, `plugins/homeassistant/` |
+| 12 | Subconscious Agent (Persona Learning) | ✅ | `agents/subconscious.py` |
+| 13 | Screen Vision (Continuous Screen Awareness) | ✅ | `agents/screen_vision.py` |
 
 ### 🔧 Task Decomposition Engine
 
@@ -302,20 +320,43 @@ Successful reasoning chains are stored and reused:
 
 ### 🔌 Plugin Ecosystem
 
-Extend Heliox OS capabilities via plugin manifests:
+Heliox OS ships with **3 flagship plugins** and supports community-built extensions:
+
+| Plugin | Type | Capabilities |
+|--------|------|--------------|
+| **developer-tools** | Code | Jira tickets, `git clone`, branch, commit, push, GitHub PRs |
+| **media-control** | System | Spotify (play/pause/skip), system volume, YouTube, media keys |
+| **home-assistant** | IoT | Smart lights, switches, thermostats, scenes, device discovery |
+
+Drop custom plugins into `~/.heliox/plugins/` — they're auto-discovered at startup.
 
 ```json
 {
-  "name": "docker-agent",
+  "name": "my-plugin",
   "version": "1.0.0",
-  "tools": [
-    {"name": "docker_build", "inputs": ["dockerfile_path", "tag"]},
-    {"name": "docker_run", "inputs": ["image", "ports"]}
-  ]
+  "tools": [{"name": "my_tool", "inputs": ["arg1"], "action_type": "api_call"}]
 }
 ```
 
-Drop plugins into `~/.heliox/plugins/` — they're auto-discovered at startup.
+### 🧠 Subconscious Agent (Persona Learning)
+
+A background agent that runs every 30 minutes to review the day's actions and learn user preferences:
+
+- Clusters behavioral patterns ("always writes Python", "prefers dark mode")
+- Extracts actionable rules with confidence scores
+- Writes a `~/.heliox/persona.md` that is injected into planner context
+- Supports manual preference setting via `persona_add_preference` API
+- Categories: `preference`, `habit`, `constraint`, `style`
+
+### 👁️ Screen Vision Agent
+
+Continuous computer-vision loop that gives the agent awareness of what the user sees:
+
+- Takes screenshots every 2 seconds, hashes for change detection
+- Detects the active application and window title cross-platform
+- Maintains a rolling context buffer of recent screen states
+- When user says "summarize this" or "close that", the planner already knows the target
+- Optional LLM-powered screen description for advanced awareness
 
 ## 🚀 Installation
 
