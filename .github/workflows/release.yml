@@ -99,7 +99,9 @@ jobs:
             6. Enter your API key (Gemini/OpenAI/Claude) in Settings
 
             ### What's New
-            *Please check our [Releases page](https://github.com/VyomKulshrestha/Heliox-OS/releases) or CHANGELOG for detailed information on this version's features.*
+            ${{ github.event.head_commit.message }}
+            
+            *You can view the full list of changes and feature details in our [Releases history](https://github.com/VyomKulshrestha/Heliox-OS/commits/main).*
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
