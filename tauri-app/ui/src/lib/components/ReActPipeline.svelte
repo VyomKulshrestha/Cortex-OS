@@ -9,8 +9,9 @@
    */
 
   import { session } from "../stores/session";
-  import { onNotification } from "../api/daemon";
+  import { onNotification, offNotification } from "../api/daemon";
   import { fade, slide } from "svelte/transition";
+  import { onDestroy } from "svelte";
 
   // ── Pipeline Stage Types ──
 
@@ -48,6 +49,8 @@
   let executionActions = $state<{ type: string; target: string; status: string }[]>([]);
   let pipelineStartTime = 0;
   let showThoughts = $state(false);
+  let collapsed = $state(false);
+  let autoCollapseTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Reasoning event state
   let stageThoughts = $state<Record<string, string>>({});
@@ -64,6 +67,8 @@
     stageDecisions = {};
     stageTiming = {};
     thoughtStream = [];
+    collapsed = false;
+    if (autoCollapseTimer) { clearTimeout(autoCollapseTimer); autoCollapseTimer = null; }
   }
 
   function setStage(id: string, status: StageStatus, detail: string = "") {
@@ -84,7 +89,7 @@
 
   // ── Listen to WebSocket Notifications ──
 
-  onNotification((method: string, params: unknown) => {
+  function handleNotification(method: string, params: unknown) {
     const p = params as Record<string, any>;
 
     switch (method) {
@@ -279,7 +284,10 @@
         break;
       }
     }
-  });
+  }
+
+  onNotification(handleNotification);
+  onDestroy(() => offNotification(handleNotification));
 
   // ── React to session phase changes for completion ──
 
@@ -290,34 +298,50 @@
     if (!s.loading && isVisible && pipelineStartTime > 0) {
       const lastMsg = s.messages[s.messages.length - 1];
       if (lastMsg) {
-        if (lastMsg.type === "result") {
-          setStage("executing", "success", `${executionActions.length} action(s) completed`);
-          setStage("verifying", lastMsg.verification?.passed ? "success" : "error",
-            lastMsg.verification?.passed ? "All checks passed" : "Verification failed");
-          setStage("reflection", "success", "Performance analyzed");
-          setStage("memory_update", "success", "History saved");
-          totalDuration = Date.now() - pipelineStartTime;
-        } else if (lastMsg.type === "error") {
-          setStage("executing", "error", "Failed");
-          setStage("verifying", "error", "N/A");
-          setStage("reflection", "success", "Failure recorded");
-          setStage("memory_update", "success", "Error logged");
-          totalDuration = Date.now() - pipelineStartTime;
-        }
+        // Defer state mutations out of the $effect tracking context
+        queueMicrotask(() => {
+          if (lastMsg.type === "result") {
+            setStage("executing", "success", `${executionActions.length} action(s) completed`);
+            setStage("verifying", lastMsg.verification?.passed ? "success" : "error",
+              lastMsg.verification?.passed ? "All checks passed" : "Verification failed");
+            setStage("reflection", "success", "Performance analyzed");
+            setStage("memory_update", "success", "History saved");
+            totalDuration = Date.now() - pipelineStartTime;
+          } else if (lastMsg.type === "error") {
+            setStage("executing", "error", "Failed");
+            setStage("verifying", "error", "N/A");
+            setStage("reflection", "success", "Failure recorded");
+            setStage("memory_update", "success", "Error logged");
+            totalDuration = Date.now() - pipelineStartTime;
+          }
+          pipelineStartTime = 0;
+        });
       }
-      pipelineStartTime = 0;
     }
 
     // When a new command starts, reset
     if (s.loading && s.phase === "" && !s.currentPlan) {
-      resetPipeline();
-      isVisible = true;
-      pipelineStartTime = Date.now();
-      setStage("user_input", "active", "Processing...");
+      queueMicrotask(() => {
+        resetPipeline();
+        isVisible = true;
+        pipelineStartTime = Date.now();
+        setStage("user_input", "active", "Processing...");
+      });
+    }
+  });
+
+  // Auto-collapse 2s after reaching 100%
+  $effect(() => {
+    if (progress === 100 && !collapsed && isVisible) {
+      queueMicrotask(() => {
+        if (autoCollapseTimer) clearTimeout(autoCollapseTimer);
+        autoCollapseTimer = setTimeout(() => { collapsed = true; }, 2000);
+      });
     }
   });
 
   let dismiss = () => { isVisible = false; };
+  let toggleCollapse = () => { collapsed = !collapsed; };
 
   // Computed: progress percentage
   let progress = $derived(
@@ -328,13 +352,16 @@
 </script>
 
 {#if isVisible}
-  <div class="react-pipeline" transition:slide={{ duration: 300 }}>
-    <!-- Header -->
-    <div class="pipeline-header">
+  <div class="react-pipeline" class:collapsed transition:slide={{ duration: 300 }}>
+    <!-- Header (always visible, clickable to expand/collapse) -->
+    <div class="pipeline-header" role="button" tabindex="0" onclick={toggleCollapse} onkeydown={(e) => e.key === 'Enter' && toggleCollapse()}>
       <div class="pipeline-title">
         <span class="reactor-icon">⚛️</span>
         ReAct Pipeline
         <span class="progress-chip">{progress}%</span>
+        {#if collapsed && totalDuration > 0}
+          <span class="collapsed-summary">completed in {(totalDuration / 1000).toFixed(1)}s — click to expand</span>
+        {/if}
       </div>
       <div class="pipeline-controls">
         {#if totalDuration > 0}
@@ -343,10 +370,13 @@
         {#if agentRouting?.is_multi_agent}
           <span class="multi-agent-badge">Multi-Agent</span>
         {/if}
-        <button class="thought-toggle" class:active={showThoughts} onclick={() => showThoughts = !showThoughts} title="Toggle thought stream">
+        <button class="collapse-toggle" onclick={(e) => { e.stopPropagation(); toggleCollapse(); }} title={collapsed ? 'Expand' : 'Collapse'}>
+          {collapsed ? '▼' : '▲'}
+        </button>
+        <button class="thought-toggle" class:active={showThoughts} onclick={(e) => { e.stopPropagation(); showThoughts = !showThoughts; }} title="Toggle thought stream">
           🧠
         </button>
-        <button class="dismiss-btn" onclick={dismiss} title="Dismiss">✕</button>
+        <button class="dismiss-btn" onclick={(e) => { e.stopPropagation(); dismiss(); }} title="Dismiss">✕</button>
       </div>
     </div>
 
@@ -355,6 +385,7 @@
       <div class="progress-fill" style="width: {progress}%"></div>
     </div>
 
+  {#if !collapsed}
     <!-- Pipeline nodes -->
     <div class="pipeline-graph">
       {#each stages as stage, i (stage.id)}
@@ -451,6 +482,7 @@
         {/each}
       </div>
     {/if}
+  {/if}
   </div>
 {/if}
 
@@ -464,6 +496,11 @@
     backdrop-filter: blur(12px);
     font-family: 'Inter', 'JetBrains Mono', monospace;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    transition: padding 0.3s ease;
+  }
+
+  .react-pipeline.collapsed {
+    padding: 0.5rem 1rem;
   }
 
   .pipeline-header {
@@ -471,6 +508,41 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 0.75rem;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .react-pipeline.collapsed .pipeline-header {
+    margin-bottom: 0;
+  }
+
+  .collapsed-summary {
+    font-size: 0.65rem;
+    color: rgba(0, 240, 255, 0.5);
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    margin-left: 4px;
+  }
+
+  .collapse-toggle {
+    background: none;
+    border: 1px solid rgba(0, 240, 255, 0.2);
+    color: rgba(0, 240, 255, 0.6);
+    border-radius: 4px;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 0.6rem;
+    transition: all 0.2s;
+  }
+
+  .collapse-toggle:hover {
+    border-color: rgba(0, 240, 255, 0.5);
+    color: rgba(0, 240, 255, 1);
   }
 
   .pipeline-title {

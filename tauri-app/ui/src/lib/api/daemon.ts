@@ -17,11 +17,16 @@ type NotificationHandler = (method: string, params: unknown) => void;
 let ws: WebSocket | null = null;
 let messageId = 0;
 const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
-let notificationHandler: NotificationHandler | null = null;
+const notificationHandlers: NotificationHandler[] = [];
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function onNotification(handler: NotificationHandler) {
-  notificationHandler = handler;
+  notificationHandlers.push(handler);
+}
+
+export function offNotification(handler: NotificationHandler) {
+  const idx = notificationHandlers.indexOf(handler);
+  if (idx !== -1) notificationHandlers.splice(idx, 1);
 }
 
 export function isConnected(): boolean {
@@ -57,7 +62,9 @@ export async function connect(): Promise<boolean> {
             }
           } else if (!data.id && "method" in data) {
             const notification = data as unknown as { method: string; params: unknown };
-            notificationHandler?.(notification.method, notification.params);
+            for (const handler of notificationHandlers) {
+              handler(notification.method, notification.params);
+            }
           }
         } catch {
           // ignore parse errors

@@ -87,12 +87,17 @@
       if (event.error === "aborted") return;
       console.error("Speech recognition error:", event.error);
       error = `Mic error: ${event.error}`;
+      // On permission or fatal errors, stop retrying completely
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        wakeWordActive = false;
+        voiceEnabled = false;
+      }
       isListening = false;
     };
 
     rec.onend = () => {
-      // Restart if in wake word mode
-      if (wakeWordActive && voiceEnabled) {
+      // Only restart if in wake word mode AND no error occurred AND voice is enabled
+      if (wakeWordActive && voiceEnabled && !error) {
         try { rec.start(); } catch { /* ignore */ }
       } else {
         isListening = false;
