@@ -27,6 +27,7 @@ logger = logging.getLogger("pilot.system.vision")
 #  Screenshot capture
 # ──────────────────────────────────────────────────────────────────────
 
+
 async def _capture_screenshot_bytes(region: tuple[int, int, int, int] | None = None) -> bytes:
     """Capture screenshot and return PNG bytes."""
     try:
@@ -53,6 +54,7 @@ async def _capture_screenshot_bytes(region: tuple[int, int, int, int] | None = N
 # ──────────────────────────────────────────────────────────────────────
 #  Main OCR entry point
 # ──────────────────────────────────────────────────────────────────────
+
 
 async def screen_ocr(
     region: tuple[int, int, int, int] | None = None,
@@ -125,11 +127,7 @@ async def screen_ocr(
 
     # ── All engines failed ───────────────────────────────────────────
     install_hint = _get_install_hint()
-    raise RuntimeError(
-        f"No OCR engine could extract text.\n"
-        f"Tried: {'; '.join(errors)}\n"
-        f"To fix: {install_hint}"
-    )
+    raise RuntimeError(f"No OCR engine could extract text.\nTried: {'; '.join(errors)}\nTo fix: {install_hint}")
 
 
 def _get_install_hint() -> str:
@@ -148,8 +146,7 @@ def _get_install_hint() -> str:
         )
     else:
         return (
-            "Install tesseract: sudo apt install tesseract-ocr  OR  "
-            "sudo dnf install tesseract  OR  pip install easyocr"
+            "Install tesseract: sudo apt install tesseract-ocr  OR  sudo dnf install tesseract  OR  pip install easyocr"
         )
 
 
@@ -157,9 +154,10 @@ def _get_install_hint() -> str:
 #  Windows native OCR (WinRT)
 # ──────────────────────────────────────────────────────────────────────
 
+
 async def _ocr_windows_native(img_bytes: bytes) -> str:
     """Use Windows 10/11 built-in OCR via PowerShell WinRT APIs.
-    
+
     Writes the PS script to a temp file to avoid escaping issues.
     """
     tmp_img = os.path.join(tempfile.gettempdir(), f"pilot_ocr_{os.getpid()}.png")
@@ -242,6 +240,7 @@ try {{
 #  macOS native OCR (Vision framework)
 # ──────────────────────────────────────────────────────────────────────
 
+
 async def _ocr_macos_native(img_bytes: bytes) -> str:
     """Use macOS Vision framework for OCR (macOS 10.15+)."""
     tmp_img = os.path.join(tempfile.gettempdir(), f"pilot_ocr_{os.getpid()}.png")
@@ -300,6 +299,7 @@ for observation in observations {{
 #  Tesseract CLI (cross-platform, no Python wrapper)
 # ──────────────────────────────────────────────────────────────────────
 
+
 async def _ocr_tesseract_cli(img_bytes: bytes, language: str) -> str:
     """Use tesseract binary directly without pytesseract wrapper."""
     # Check if tesseract is installed
@@ -335,6 +335,7 @@ async def _ocr_tesseract_cli(img_bytes: bytes, language: str) -> str:
 #  EasyOCR
 # ──────────────────────────────────────────────────────────────────────
 
+
 async def _ocr_easyocr(img_bytes: bytes, language: str) -> str:
     from io import BytesIO
 
@@ -344,8 +345,16 @@ async def _ocr_easyocr(img_bytes: bytes, language: str) -> str:
 
     # Map common language codes to easyocr format
     lang_map = {
-        "eng": "en", "fra": "fr", "deu": "de", "spa": "es", "ita": "it",
-        "por": "pt", "rus": "ru", "jpn": "ja", "kor": "ko", "chi_sim": "ch_sim",
+        "eng": "en",
+        "fra": "fr",
+        "deu": "de",
+        "spa": "es",
+        "ita": "it",
+        "por": "pt",
+        "rus": "ru",
+        "jpn": "ja",
+        "kor": "ko",
+        "chi_sim": "ch_sim",
     }
     lang_code = lang_map.get(language, language[:2] if len(language) >= 2 else "en")
 
@@ -370,6 +379,7 @@ async def _ocr_easyocr(img_bytes: bytes, language: str) -> str:
 #  pytesseract (Python wrapper)
 # ──────────────────────────────────────────────────────────────────────
 
+
 async def _ocr_pytesseract(img_bytes: bytes, language: str) -> str:
     from io import BytesIO
 
@@ -386,6 +396,7 @@ async def _ocr_pytesseract(img_bytes: bytes, language: str) -> str:
 # ──────────────────────────────────────────────────────────────────────
 #  screen_find_text
 # ──────────────────────────────────────────────────────────────────────
+
 
 async def screen_find_text(
     target_text: str,
@@ -417,12 +428,14 @@ async def screen_find_text(
                 if target_text.lower() in text.lower():
                     cx = int(sum(p[0] for p in bbox) / 4)
                     cy = int(sum(p[1] for p in bbox) / 4)
-                    matches.append({
-                        "text": text,
-                        "center": (cx, cy),
-                        "confidence": round(conf, 3),
-                        "bbox": [[int(p[0]), int(p[1])] for p in bbox],
-                    })
+                    matches.append(
+                        {
+                            "text": text,
+                            "center": (cx, cy),
+                            "confidence": round(conf, 3),
+                            "bbox": [[int(p[0]), int(p[1])] for p in bbox],
+                        }
+                    )
             return matches
 
         matches = await asyncio.to_thread(_do)
@@ -437,12 +450,15 @@ async def screen_find_text(
     try:
         all_text = await screen_ocr(region)
         if target_text.lower() in all_text.lower():
-            return json.dumps({
-                "found": True,
-                "text": target_text,
-                "note": "Text found in OCR output but exact coordinates unavailable without easyocr",
-                "context": all_text[:500],
-            }, indent=2)
+            return json.dumps(
+                {
+                    "found": True,
+                    "text": target_text,
+                    "note": "Text found in OCR output but exact coordinates unavailable without easyocr",
+                    "context": all_text[:500],
+                },
+                indent=2,
+            )
         return f"Text '{target_text}' not found on screen"
     except Exception as e:
         return f"Text search failed: {e}"
@@ -451,6 +467,7 @@ async def screen_find_text(
 # ──────────────────────────────────────────────────────────────────────
 #  screen_analyze (vision LLM)
 # ──────────────────────────────────────────────────────────────────────
+
 
 async def screen_analyze(
     prompt: str = "Describe what you see on the screen",
@@ -492,6 +509,7 @@ async def screen_analyze(
 #  screen_element_map
 # ──────────────────────────────────────────────────────────────────────
 
+
 async def screen_element_map(
     region: tuple[int, int, int, int] | None = None,
 ) -> str:
@@ -528,9 +546,22 @@ async def screen_element_map(
                 elem_type = "text"
                 text_lower = text.lower().strip()
                 if text_lower in (
-                    "ok", "cancel", "save", "close", "yes", "no", "apply",
-                    "submit", "next", "back", "done", "open", "delete",
-                    "remove", "install", "run",
+                    "ok",
+                    "cancel",
+                    "save",
+                    "close",
+                    "yes",
+                    "no",
+                    "apply",
+                    "submit",
+                    "next",
+                    "back",
+                    "done",
+                    "open",
+                    "delete",
+                    "remove",
+                    "install",
+                    "run",
                 ):
                     elem_type = "button"
                 elif w > 100 and h < 30:
@@ -538,14 +569,16 @@ async def screen_element_map(
                 elif text_lower.startswith("http") or text_lower.startswith("www"):
                     elem_type = "link"
 
-                elements.append({
-                    "id": i,
-                    "type": elem_type,
-                    "text": text,
-                    "center": {"x": cx, "y": cy},
-                    "size": {"w": w, "h": h},
-                    "confidence": round(conf, 3),
-                })
+                elements.append(
+                    {
+                        "id": i,
+                        "type": elem_type,
+                        "text": text,
+                        "center": {"x": cx, "y": cy},
+                        "size": {"w": w, "h": h},
+                        "confidence": round(conf, 3),
+                    }
+                )
             return elements
 
         elements = await asyncio.to_thread(_do)
